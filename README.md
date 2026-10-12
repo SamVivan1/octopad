@@ -97,7 +97,7 @@ octopad/
 ├── octopad.ino          # Arduino / ESP32-C3 firmware
 ├── README.md                 # Main repository documentation
 ├── VERSION                   # Application version (used by the packaging CI)
-├── .github/workflows/        # CI: lint + unit tests + build .deb/.exe
+├── .github/workflows/        # CI: lint + tests + build .deb/.exe/firmware
 ├── tests/                    # pytest suite (config, parsers, TIMING sync)
 ├── packaging/deb/            # Debian package builder (build_deb.sh)
 ├── windows-app/              # Native Windows application (PySide6 / Qt6)
@@ -197,9 +197,12 @@ details.
 
 ### 📦 Prebuilt Packages & CI/CD
 Every update triggers the [`Build`](.github/workflows/build.yml) workflow, which
-produces a **`.deb`** for Linux (statically built with `packaging/deb/build_deb.sh`)
-and a **standalone `.exe`** for Windows (built with PyInstaller). Push a tag like
-`v2.6.0` and both files are attached to the GitHub **Release** automatically.
+produces a **`.deb`** for Linux (statically built with `packaging/deb/build_deb.sh`),
+a **standalone `.exe`** for Windows (built with PyInstaller) and the **ESP32
+firmware `.bin`** (compiled with `arduino-cli` for the ESP32-C3). Push a tag like
+`v2.6.0` and all three files are attached to the GitHub **Release**
+automatically. Pull requests that touch `octopad.ino` are compile-checked by the
+[`Firmware`](.github/workflows/firmware.yml) workflow.
 
 - **Linux (.deb)** — install with:
   ```bash

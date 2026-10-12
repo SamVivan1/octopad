@@ -102,10 +102,44 @@ jobs:
           path: windows-app/dist/octopad_*_windows-x64.exe
           if-no-files-found: error
 
+  build-firmware:
+    name: Build firmware (ESP32-C3)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.5
+
+      - name: Install NimBLE library
+        run: arduino-cli lib install "NimBLE-Arduino@2.5.1"
+
+      - name: Compile sketch
+        run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --output-dir build .
+
+      - name: Name artifact
+        run: |
+          set -e
+          test -f build/octopad.ino.bin
+          cp build/octopad.ino.bin "octopad_${{ needs.version.outputs.app }}_firmware.bin"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: octopad-firmware
+          path: octopad_*_firmware.bin
+          if-no-files-found: error
+
   release:
     name: Publish release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ version, build-deb, build-exe ]
+    needs: [ version, build-deb, build-exe, build-firmware ]
     runs-on: ubuntu-latest
     permissions:
       contents: write

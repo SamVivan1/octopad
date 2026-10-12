@@ -25,6 +25,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Firmware LED feedback is now **non-blocking**: double/hold feedback no longer
   stalls button handling for up to ~480 ms.
 - Version bumped to 2.6 (firmware, apps, `VERSION`).
+- CI now compiles the firmware (`arduino-cli`, ESP32-C3) and attaches
+  `octopad_*_firmware.bin` to GitHub Releases; a dedicated `Firmware` workflow
+  checks firmware changes on pull requests.
 - Home Assistant credentials are written with owner-only permissions (`0600`)
   where the platform supports it.
 

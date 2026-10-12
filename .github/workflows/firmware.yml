@@ -1,0 +1,29 @@
+name: Firmware
+
+on:
+  pull_request:
+    paths:
+      - 'octopad.ino'
+      - '.github/workflows/firmware.yml'
+  workflow_dispatch:
+
+jobs:
+  compile:
+    name: Compile firmware (ESP32-C3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.5
+
+      - name: Install NimBLE library
+        run: arduino-cli lib install "NimBLE-Arduino@2.5.1"
+
+      - name: Compile sketch
+        run: arduino-cli compile --fqbn esp32:esp32:esp32c3 .
