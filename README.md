@@ -2,10 +2,10 @@
 
 [![ESP32](https://img.shields.io/badge/Microcontroller-ESP32--C3-red.svg?logo=espressif)](https://www.espressif.com/)
 [![Connectivity](https://img.shields.io/badge/Connectivity-BLE%20HID%20%7C%20USB--Serial-blue.svg)](https://github.com/)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20Ubuntu%20%7C%20Cross--Platform-E95420.svg?logo=ubuntu)](https://ubuntu.com/)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-0078D6.svg?logo=windows&logoColor=white)](https://github.com/SamVivan1/octopad)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**OctoPad v2.5** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by a **native Linux desktop application (GTK4 + Libadwaita)** for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
+**OctoPad v2.5** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
 
 ---
 
@@ -96,6 +96,19 @@ All default shortcuts are sent with the modifier combination: `Ctrl + Alt + Shif
 octopad/
 ├── octopad.ino          # Arduino / ESP32-C3 firmware
 ├── README.md                 # Main repository documentation
+├── windows-app/              # Native Windows application (PySide6 / Qt6)
+│   ├── main.py               # QApplication entry point
+│   ├── config.py             # Profiles, presets, configuration validation
+│   ├── state.py              # Runtime state bus (Qt signal bridge)
+│   ├── ui/                   # Qt pages & dialogs
+│   ├── app_scanner.py        # Installed application scanner (Start Menu)
+│   ├── platform_actions.py   # Local action execution (shortcuts, audio, ...)
+│   ├── home_assistant.py     # Home Assistant REST client
+│   ├── serial_listener.py    # Serial listener + device identification
+│   ├── ble_bridge.py         # BLE GATT client (bleak)
+│   ├── tray.py               # System tray icon
+│   ├── install.ps1           # Installer (PowerShell)
+│   └── uninstall.ps1         # Uninstaller (PowerShell)
 └── linux-app/                # Native desktop application (GTK4 + Libadwaita)
     ├── main.py               # Adw.Application entry point
     ├── config.py             # Profiles, presets, configuration validation
@@ -157,6 +170,25 @@ No IP, token, or entity is hardcoded in the source:
    `~/.config/octopad/ha_entities_cache.json` so they remain visible while HA is offline.
 6. All calls are made directly from the Python module `home_assistant.py` —
    there is no local HTTP endpoint or additional service running in the background.
+
+### 🪟 Running as a Native Windows Application (Recommended)
+The Windows port mirrors the Linux app feature-for-feature with **PySide6 / Qt6**
+and needs **Python 3.9+**:
+1. **Install** — open PowerShell in `windows-app` and run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install.ps1
+   ```
+   This creates a virtual environment, installs the dependencies, and adds a
+   Start Menu shortcut (plus a background/tray autostart entry).
+2. Launch **OctoPad** from the Start Menu, or run `run.bat`.
+3. Closing the window keeps the app running in the **system tray**; use the tray
+   menu to reopen it or quit.
+
+The device talks over USB Serial or **Bluetooth LE** (via `bleak`), identifies
+the pad through the same `HELLO:OCTOPAD:<name>:v<version>` handshake and BLE
+service UUID as the firmware, and stores its configuration in
+`%APPDATA%\OctoPad\`. See [`windows-app/README.md`](windows-app/README.md) for
+details.
 
 ### 🏷️ Device Naming & Identification (BYO board)
 Your DIY build does not have to be called *OctoPad*. The firmware and app agree

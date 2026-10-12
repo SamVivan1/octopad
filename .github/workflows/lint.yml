@@ -19,10 +19,18 @@ jobs:
       - name: Install linters
         run: python -m pip install --upgrade pip pyflakes
 
-      - name: Byte-compile Python sources
+      - name: Byte-compile Python sources (Linux app)
         working-directory: linux-app
         run: python -m compileall -q .
 
-      - name: pyflakes
+      - name: pyflakes (Linux app)
         working-directory: linux-app
         run: python3 -m pyflakes *.py ui/*.py tray-icons/*.py
+
+      - name: Byte-compile Python sources (Windows app)
+        working-directory: windows-app
+        run: python -m compileall -q .
+
+      - name: pyflakes (Windows app)
+        working-directory: windows-app
+        run: python3 -m pyflakes *.py ui/*.py
