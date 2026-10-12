@@ -229,23 +229,10 @@ class SerialDaemonListener:
         behaviour matches what the Settings page shows. Best effort: returns
         False when the port is not open or the values are invalid.
         """
-        try:
-            debounce = int(self.config.get("debounceMs", 25))
-            click = int(self.config.get("clickTimeoutMs", 250))
-            hold = int(self.config.get("holdTimeoutMs", 450))
-        except (TypeError, ValueError):
+        command = config_module.timing_command(self.config)
+        if command is None:
             return False
-        return self.send_command(f"TIMING:{debounce},{click},{hold}", log=False)
-
-    def rename_device(self, name: str) -> bool:
-        """Ask the firmware to adopt `name` over serial."""
-        name = name.strip()
-        if not name or len(name) > 24:
-            return False
-        if self.send_command(f"NAME:{name}"):
-            self.device_name = name
-            return True
-        return False
+        return self.send_command(command, log=False)
 
     def _probe_port(self, port: str) -> Optional[str]:
         """Open `port`, ask the pad to identify itself, and return its name.

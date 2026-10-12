@@ -24,6 +24,28 @@ CURRENT_SCHEMA_VERSION = 1
 # Physical pinout for buttons B1..B8 (same as octopad.ino)
 PINOUT = [20, 9, 2, 1, 21, 10, 3, 0]
 
+# Default timing-engine values, shared by the config and the firmware sync.
+DEFAULT_TIMINGS: Dict[str, int] = {
+    "debounceMs": 25,
+    "clickTimeoutMs": 250,
+    "holdTimeoutMs": 450,
+}
+
+
+def timing_command(config: Dict[str, Any]) -> Optional[str]:
+    """Format the firmware ``TIMING`` command, or None when values are invalid.
+
+    Both transports (USB serial and BLE) use this so the pad always receives an
+    identical command built from a single source of truth.
+    """
+    try:
+        debounce = int(config.get("debounceMs", DEFAULT_TIMINGS["debounceMs"]))
+        click = int(config.get("clickTimeoutMs", DEFAULT_TIMINGS["clickTimeoutMs"]))
+        hold = int(config.get("holdTimeoutMs", DEFAULT_TIMINGS["holdTimeoutMs"]))
+    except (TypeError, ValueError):
+        return None
+    return f"TIMING:{debounce},{click},{hold}"
+
 TRIGGERS: List[Tuple[str, str]] = [
     ("single", "Single Click (1x)"),
     ("double", "Double Click (2x)"),
@@ -160,9 +182,7 @@ def default_config() -> Dict[str, Any]:
         "version": 2.6,
         "schemaVersion": CURRENT_SCHEMA_VERSION,
         "device": "OctoPad",
-        "debounceMs": 25,
-        "clickTimeoutMs": 250,
-        "holdTimeoutMs": 450,
+        **DEFAULT_TIMINGS,
         "activeModeIndex": 0,
         "modes": [
             {"id": "desktop", "name": "Desktop Mode", "ledState": True, "buttons": desktop_buttons},

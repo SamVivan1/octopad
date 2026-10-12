@@ -22,8 +22,10 @@ gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 from gi.repository import Gio, GLib
 
+import config as config_module
 import state
-from serial_listener import execute_button_trigger, parse_event_line
+from serial_listener import (execute_button_trigger, parse_event_line,
+                             parse_hello)
 
 SERVICE_UUID = "6f63746f-7061-4430-8001-000000000001"
 TX_UUID = "6f63746f-7061-4430-8001-000000000002"
@@ -35,9 +37,7 @@ LEGACY_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 LEGACY_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 LEGACY_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
-# Brand tag carried by the identity line (HELLO:<tag>:<name>:v<ver>) and the
-# default device name used when the user has not renamed their pad.
-BRAND_TAG = "OCTOPAD"
+# Default device name used when the user has not renamed their pad.
 DEFAULT_DEVICE_NAME = "OctoPad"
 
 _BLUEZ = "org.bluez"
@@ -77,11 +77,6 @@ _LINE_PATTERN = re.compile(
     r'[^\n[]*'
     r'|MODE:\s*(?:HOME ASSISTANT|DESKTOP)'
     r'|HELLO:[^\n[]*',
-    re.IGNORECASE)
-
-# Identity line: HELLO:OCTOPAD:<device-name>:v<version>
-_HELLO_PATTERN = re.compile(
-    r'HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::v?([0-9][0-9A-Za-z._-]*))?',
     re.IGNORECASE)
 
 
@@ -147,14 +142,10 @@ class BleBridge:
 
     def sync_timings(self) -> bool:
         """Push the configured timing parameters to the wireless pad."""
-        cfg = getattr(state, "cfg", None) or {}
-        try:
-            debounce = int(cfg.get("debounceMs", 25))
-            click = int(cfg.get("clickTimeoutMs", 250))
-            hold = int(cfg.get("holdTimeoutMs", 450))
-        except (TypeError, ValueError):
+        command = config_module.timing_command(getattr(state, "cfg", None) or {})
+        if command is None:
             return False
-        return self.send_command(f"TIMING:{debounce},{click},{hold}", log=False)
+        return self.send_command(command, log=False)
 
     def _set_status(self, connected: bool, message: str) -> None:
         """Update UI status, logging only when it actually changes."""
@@ -576,10 +567,10 @@ class BleBridge:
         else:
             state.emit("serial-log", line=line)
 
-        match = _HELLO_PATTERN.search(line)
-        if match and match.group(1).upper() == BRAND_TAG:
-            state.set_device_name(match.group(2).strip() or DEFAULT_DEVICE_NAME)
-            state.set_firmware_version((match.group(3) or "").strip())
+        hello = parse_hello(line)
+        if hello is not None:
+            state.set_device_name(hello["name"] or DEFAULT_DEVICE_NAME)
+            state.set_firmware_version(hello["version"])
             return
 
         event = parse_event_line(line)

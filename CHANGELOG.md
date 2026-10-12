@@ -20,6 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   applications, so old profiles keep working after format changes.
 - Unit tests (`tests/`, pytest) for the config/preset logic, the firmware line
   parsers and the `TIMING` sync, wired into CI.
+- Developer scripts: `scripts/build_firmware.sh` (compile/flash via `arduino-cli`
+  with pinned core/library versions) and `scripts/check.sh` (pyflakes +
+  compileall + pytest + firmware compile), documented in the README.
 
 ### Changed
 - The applications can now **send commands over Bluetooth** as well: the Linux
@@ -27,6 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to the RX characteristic, so timing sync works on a fully wireless setup.
 - Firmware LED feedback is now **non-blocking**: double/hold feedback no longer
   stalls button handling for up to ~480 ms.
+- Timing sync is built by a single `config.timing_command()` helper (with
+  `DEFAULT_TIMINGS`), so USB and BLE always send an identical `TIMING` command;
+  both bridge modules now reuse the serial `parse_hello()` instead of their own
+  regex, and the unused `SerialDaemonListener.rename_device()` was removed.
 - Firmware watchdog (task WDT) reboots the pad automatically if the main loop
   ever hangs; added `INFO` (dump name/mode/timings) and `RESTART` commands.
 - Renaming the pad now works over **USB or Bluetooth** (Settings → Device).

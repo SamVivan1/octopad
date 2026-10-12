@@ -8,6 +8,19 @@ def cfg(request):
     return request.getfixturevalue(request.param)
 
 
+def test_timing_command_formats_values(cfg):
+    assert cfg.timing_command({"debounceMs": 20, "clickTimeoutMs": 250,
+                               "holdTimeoutMs": 500}) == "TIMING:20,250,500"
+
+
+def test_timing_command_uses_defaults(cfg):
+    assert cfg.timing_command({}) == "TIMING:25,250,450"
+
+
+def test_timing_command_rejects_garbage(cfg):
+    assert cfg.timing_command({"debounceMs": "nope"}) is None
+
+
 def test_default_config_shape(cfg):
     data = cfg.default_config()
     assert data["schemaVersion"] == cfg.CURRENT_SCHEMA_VERSION

@@ -99,6 +99,9 @@ octopad/
 ├── VERSION                   # Application version (used by the packaging CI)
 ├── .github/workflows/        # CI: lint + tests + build .deb/.exe/firmware
 ├── tests/                    # pytest suite (config, parsers, TIMING sync)
+├── scripts/                  # Developer helpers
+│   ├── build_firmware.sh     # Build/flash firmware with arduino-cli
+│   └── check.sh              # Run pyflakes + compileall + pytest (+ firmware)
 ├── packaging/deb/            # Debian package builder (build_deb.sh)
 ├── windows-app/              # Native Windows application (PySide6 / Qt6)
 │   ├── octopad.spec          # PyInstaller build definition (.exe)
@@ -290,6 +293,30 @@ sudo chmod a+rw /dev/ttyUSB0    # or /dev/ttyACM0
    - `NimBLE-Arduino` (by h2zero) — `Preferences` is built into the ESP32 core.
 5. Open the file [`octopad.ino`](octopad.ino).
 6. Plug the USB-C cable into the ESP32 and click **Upload**.
+
+### ⚡ Building from the command line (arduino-cli)
+
+Prefer the terminal (or CI-like reproducibility)? The helper script installs the
+exact core/library versions and compiles the sketch:
+
+```bash
+# Compile only — produces build/octopad.ino.bin
+scripts/build_firmware.sh
+
+# Compile and flash to an auto-detected board
+scripts/build_firmware.sh --upload
+
+# Flash to a specific port
+scripts/build_firmware.sh --upload --port /dev/ttyACM0
+```
+
+Override versions if needed with `FQBN`, `CORE_VER` and `NIMBLE_VER` environment
+variables. Before opening a pull request, run the full local check (Python lint +
+tests + firmware compile):
+
+```bash
+scripts/check.sh
+```
 
 ---
 
