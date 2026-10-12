@@ -240,7 +240,12 @@ on a small identity protocol so any name works:
   | `TIMING:<d>,<c>,<h>` | `TIMING:OK:…` | Set debounce / click / hold (ms) |
   | `MODE:DESKTOP\|HA` | `MODE: …` | Switch layer + persist |
   | `SAVE` | `SAVED` | Persist name, mode and timings |
+  | `INFO` | `INFO:…` | Dump name, mode and timings |
   | `RESET` | `RESET:OK` | Restore default timings + Desktop mode |
+  | `RESTART` | `REBOOTING` | Reboot the ESP32 |
+
+  The firmware also runs a task watchdog: if the main loop ever hangs, the pad
+  reboots itself automatically.
 
   The app sends `TIMING:` automatically whenever it connects or saves, over
   **whichever link is active** (USB serial or Bluetooth), so the pad always

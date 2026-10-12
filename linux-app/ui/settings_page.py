@@ -352,14 +352,12 @@ class SettingsPage(Gtk.Box):
         elif state.serial_connected:
             self.device_row.set_subtitle("Connected — unknown firmware")
         else:
-            self.device_row.set_subtitle("Not connected (connect via USB to rename)")
+            self.device_row.set_subtitle("Not connected")
 
     def _on_rename_device(self, _btn) -> None:
-        listener = state.listener
-        if listener is None or not state.serial_connected:
+        if not (state.serial_connected or state.ble_connected):
             self.window.show_toast(
-                "Connect the pad via USB to rename it (BLE renames need USB).",
-                "error")
+                "Connect the pad (USB or Bluetooth) to rename it.", "error")
             return
 
         dialog = Adw.MessageDialog(
@@ -386,8 +384,7 @@ class SettingsPage(Gtk.Box):
             if not name or len(name) > 24:
                 self.window.show_toast("Name must be 1–24 characters.", "error")
                 return
-            if listener.rename_device(name):
-                state.set_device_name(name)
+            if state.rename_device(name):
                 self.window.show_toast(f"Device renamed to “{name}”.", "success")
             else:
                 self.window.show_toast("Failed to rename the device.", "error")

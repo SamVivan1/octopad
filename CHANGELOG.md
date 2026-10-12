@@ -27,6 +27,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to the RX characteristic, so timing sync works on a fully wireless setup.
 - Firmware LED feedback is now **non-blocking**: double/hold feedback no longer
   stalls button handling for up to ~480 ms.
+- Firmware watchdog (task WDT) reboots the pad automatically if the main loop
+  ever hangs; added `INFO` (dump name/mode/timings) and `RESTART` commands.
+- Renaming the pad now works over **USB or Bluetooth** (Settings → Device).
 - Version bumped to 2.6 (firmware, apps, `VERSION`).
 - CI now compiles the firmware (`arduino-cli`, ESP32-C3) and attaches
   `octopad_*_firmware.bin` to GitHub Releases; a dedicated `Firmware` workflow

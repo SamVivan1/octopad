@@ -52,3 +52,10 @@ def serial_listener():
     import serial_listener
 
     return serial_listener
+
+
+@pytest.fixture(scope="session")
+def linux_state():
+    import state
+
+    return state

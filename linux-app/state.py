@@ -69,6 +69,30 @@ def _sync_timings() -> None:
             print(f"[STATE] failed to sync timings: {exc}")
 
 
+def send_device_command(command: str, log: bool = True) -> bool:
+    """Send a text command to the pad, preferring USB serial over BLE."""
+    for target in (listener, ble):
+        if target is None:
+            continue
+        try:
+            if target.send_command(command, log=log):
+                return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[STATE] failed to send device command: {exc}")
+    return False
+
+
+def rename_device(name: str) -> bool:
+    """Rename the pad over whichever transport is connected (USB or BLE)."""
+    name = name.strip()
+    if not name or len(name) > 24:
+        return False
+    if send_device_command(f"NAME:{name}"):
+        set_device_name(name)
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Simple bus
 # ---------------------------------------------------------------------------

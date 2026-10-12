@@ -162,10 +162,9 @@ class SettingsPage(QWidget):
         util.run_async(lambda: get_installed_apps(force_refresh=True), done)
 
     def _on_rename_device(self) -> None:
-        listener = state.listener
-        if listener is None or not state.serial_connected:
+        if not (state.serial_connected or state.ble_connected):
             self.window.show_toast(
-                "Connect the macropad over USB to rename it.", "error")
+                "Connect the macropad (USB or Bluetooth) to rename it.", "error")
             return
         name, ok = QInputDialog.getText(
             self, "Rename Device", "Name (1-24 characters):",
@@ -176,7 +175,7 @@ class SettingsPage(QWidget):
         if not name or len(name) > 24:
             self.window.show_toast("Name must be 1-24 characters.", "error")
             return
-        if listener.rename_device(name):
+        if state.rename_device(name):
             self.window.show_toast(f'Device renamed to "{name}".', "success")
         else:
             self.window.show_toast("Failed to rename the device.", "error")

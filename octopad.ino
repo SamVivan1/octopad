@@ -255,6 +255,8 @@ void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
 //   MODE:DESKTOP|HA     -> MODE: DESKTOP | MODE: HOME ASSISTANT
 //   SAVE                -> SAVED
 //   RESET               -> RESET:OK (timings + mode restored, name kept)
+//   INFO                -> INFO:name=...,mode=...,debounce=...,click=...,hold=...
+//   RESTART             -> REBOOTING (reboots the ESP32)
 // ---------------------------------------------------------------------------
 void processCommand(const String& l) {
   if (l.startsWith("WHO")) {
@@ -266,7 +268,15 @@ void processCommand(const String& l) {
     return;
   }
   if (l.startsWith("HELP")) {
-    respond("HELP:WHO,NAME,TIMING,MODE,SAVE,RESET,VERSION");
+    respond("HELP:WHO,NAME,TIMING,MODE,SAVE,RESET,INFO,RESTART,VERSION");
+    return;
+  }
+  if (l.startsWith("INFO")) {
+    String info = String("INFO:name=") + deviceName +
+                  ",mode=" + (currentMode == DESKTOP_MODE ? "DESKTOP" : "HA") +
+                  ",debounce=" + debounceMs + ",click=" + clickTimeoutMs +
+                  ",hold=" + holdTimeoutMs + ",version=" + FIRMWARE_VERSION;
+    respond(info);
     return;
   }
   if (l.startsWith("NAME:")) {
@@ -331,6 +341,12 @@ void processCommand(const String& l) {
     respond("RESET:OK");
     return;
   }
+  if (l.startsWith("RESTART")) {
+    respond("REBOOTING");
+    delay(100);
+    ESP.restart();
+    return;
+  }
   respond("ERR:UNKNOWN");
 }
 
@@ -373,6 +389,9 @@ void setup() {
   Serial.print(deviceName);
   Serial.println(" Ready");
   Serial.println(helloLine());
+
+  // Reset the board automatically if the main loop ever hangs.
+  enableLoopWDT();
 }
 
 void loop() {
@@ -429,5 +448,8 @@ void loop() {
       }
     }
   }
+
+  // Keep the task watchdog happy (enabled at the end of setup()).
+  feedLoopWDT();
   delay(1);
 }
