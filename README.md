@@ -96,7 +96,11 @@ All default shortcuts are sent with the modifier combination: `Ctrl + Alt + Shif
 octopad/
 ├── octopad.ino          # Arduino / ESP32-C3 firmware
 ├── README.md                 # Main repository documentation
+├── VERSION                   # Application version (used by the packaging CI)
+├── .github/workflows/        # CI: lint + build .deb/.exe (build.yml)
+├── packaging/deb/            # Debian package builder (build_deb.sh)
 ├── windows-app/              # Native Windows application (PySide6 / Qt6)
+│   ├── octopad.spec          # PyInstaller build definition (.exe)
 │   ├── main.py               # QApplication entry point
 │   ├── config.py             # Profiles, presets, configuration validation
 │   ├── state.py              # Runtime state bus (Qt signal bridge)
@@ -189,6 +193,25 @@ the pad through the same `HELLO:OCTOPAD:<name>:v<version>` handshake and BLE
 service UUID as the firmware, and stores its configuration in
 `%APPDATA%\OctoPad\`. See [`windows-app/README.md`](windows-app/README.md) for
 details.
+
+### 📦 Prebuilt Packages & CI/CD
+Every update triggers the [`Build`](.github/workflows/build.yml) workflow, which
+produces a **`.deb`** for Linux (statically built with `packaging/deb/build_deb.sh`)
+and a **standalone `.exe`** for Windows (built with PyInstaller). Push a tag like
+`v2.5.0` and both files are attached to the GitHub **Release** automatically.
+
+- **Linux (.deb)** — install with:
+  ```bash
+  sudo apt install ./octopad_*_all.deb
+  ```
+  Pulls the GTK4 / Libadwaita dependencies, adds the *OctoPad* entry to the
+  application menu and a background/tray autostart entry. Remove with
+  `sudo apt remove octopad`.
+- **Windows (.exe)** — download `octopad_*_windows-x64.exe` and run it; no Python
+  installation required.
+
+Workflow artifacts (from any `main` build) are available on the run's page under
+**Actions → Build → Artifacts**.
 
 ### 🏷️ Device Naming & Identification (BYO board)
 Your DIY build does not have to be called *OctoPad*. The firmware and app agree

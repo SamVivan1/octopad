@@ -20,3 +20,9 @@ node_modules/
 
 # Aset tray yang di-generate (lihat linux-app/tray-icons/gen_tray_icons.py)
 linux-app/tray-icons/out/
+
+# Hasil build paket (.deb / .exe)
+dist/
+build/
+*.deb
+windows-app/*.ico

@@ -1,0 +1,132 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.v.outputs.app }}
+      deb: ${{ steps.v.outputs.deb }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine version
+        id: v
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            APP="${GITHUB_REF_NAME#v}"
+          else
+            APP="$(cat VERSION)"
+          fi
+          echo "app=${APP}" >> "$GITHUB_OUTPUT"
+          echo "deb=${APP}-1" >> "$GITHUB_OUTPUT"
+          echo "Building OctoPad ${APP}"
+
+  build-deb:
+    name: Build .deb (Linux)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade pip pillow
+
+      - name: Build Debian package
+        run: ./packaging/deb/build_deb.sh "${{ needs.version.outputs.deb }}" dist
+
+      - name: Verify package
+        run: |
+          set -e
+          DEB="$(ls dist/*.deb)"
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB" > /dev/null
+          dpkg-deb --contents "$DEB" | grep -q './usr/bin/octopad'
+          echo "OK: $DEB"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: octopad-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  build-exe:
+    name: Build .exe (Windows)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r windows-app/requirements.txt
+          python -m pip install pyinstaller pillow
+
+      - name: Generate application icon
+        working-directory: windows-app
+        run: |
+          python -c "from PIL import Image; Image.open('../linux-app/octopad.png').save('octopad.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+      - name: Build executable
+        working-directory: windows-app
+        run: pyinstaller --noconfirm --clean octopad.spec
+
+      - name: Name artifact
+        working-directory: windows-app
+        run: Copy-Item dist/OctoPad.exe "dist/octopad_${{ needs.version.outputs.app }}_windows-x64.exe"
+
+      - name: Upload .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: octopad-exe
+          path: windows-app/dist/octopad_*_windows-x64.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ version, build-deb, build-exe ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          ls -lh dist
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "OctoPad ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
