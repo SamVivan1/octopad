@@ -187,6 +187,21 @@ class SerialDaemonListener:
             print(f"[DAEMON] Failed to send command: {exc}")
             return False
 
+    def sync_timings(self) -> bool:
+        """Push the configured timing parameters to the firmware.
+
+        The firmware treats these as authoritative once received, so the USB/BLE
+        behaviour matches what the Settings page shows. Best effort: returns
+        False when the port is not open or the values are invalid.
+        """
+        try:
+            debounce = int(self.config.get("debounceMs", 25))
+            click = int(self.config.get("clickTimeoutMs", 250))
+            hold = int(self.config.get("holdTimeoutMs", 450))
+        except (TypeError, ValueError):
+            return False
+        return self.send_command(f"TIMING:{debounce},{click},{hold}", log=False)
+
     def rename_device(self, name: str) -> bool:
         name = name.strip()
         if not name or len(name) > 24:
@@ -264,6 +279,7 @@ class SerialDaemonListener:
                         self.ser.write(b"WHO\n")
                     except Exception:  # noqa: BLE001
                         pass
+                    self.sync_timings()
                 except Exception:  # noqa: BLE001
                     time.sleep(2)
                     continue

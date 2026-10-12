@@ -2,67 +2,14 @@
 #include <Preferences.h>
 
 // ---------------------------------------------------------------------------
-// USB HID keyboard usage IDs (standard HID keycodes).
-// Earlier versions pulled these from <HijelHID_BLEKeyboard.h>; the library was
-// later dropped in favour of NimBLE. The constants are kept because the config
-// arrays below are still stored/sent for SET/SAVE compatibility, and they must
-// match the keycodes produced by firmware_sync.py on the application side.
-// ---------------------------------------------------------------------------
-#define KEY_A 0x04
-#define KEY_B 0x05
-#define KEY_C 0x06
-#define KEY_D 0x07
-#define KEY_E 0x08
-#define KEY_F 0x09
-#define KEY_G 0x0A
-#define KEY_H 0x0B
-#define KEY_I 0x0C
-#define KEY_J 0x0D
-#define KEY_K 0x0E
-#define KEY_L 0x0F
-#define KEY_M 0x10
-#define KEY_N 0x11
-#define KEY_O 0x12
-#define KEY_P 0x13
-#define KEY_Q 0x14
-#define KEY_R 0x15
-#define KEY_S 0x16
-#define KEY_T 0x17
-#define KEY_U 0x18
-#define KEY_V 0x19
-#define KEY_W 0x1A
-#define KEY_X 0x1B
-#define KEY_Y 0x1C
-#define KEY_Z 0x1D
-#define KEY_1 0x1E
-#define KEY_2 0x1F
-#define KEY_3 0x20
-#define KEY_4 0x21
-#define KEY_5 0x22
-#define KEY_6 0x23
-#define KEY_7 0x24
-#define KEY_8 0x25
-#define KEY_9 0x26
-#define KEY_0 0x27
-#define KEY_F1  0x3A
-#define KEY_F2  0x3B
-#define KEY_F3  0x3C
-#define KEY_F4  0x3D
-#define KEY_F5  0x3E
-#define KEY_F6  0x3F
-#define KEY_F7  0x40
-#define KEY_F8  0x41
-#define KEY_F9  0x42
-#define KEY_F10 0x43
-#define KEY_F11 0x44
-#define KEY_F12 0x45
-
-// ---------------------------------------------------------------------------
 // Layer BLE: custom service for sending button events to the application. All
 // actions (shortcuts, text, media, Home Assistant, launch app, bash) are
 // executed BY THE APPLICATION — whether over USB serial or over BLE — so that
 // cable and Bluetooth modes stay consistent. The firmware only sends text lines
 // identical to those the application used to parse from serial.
+//
+// The same command protocol is accepted on both transports: the application can
+// talk to the pad over USB serial or by writing to the RX characteristic.
 //
 // The UUIDs below are unique to this project: the first four octets of the
 // service UUID spell "octo" in ASCII, so the application can recognise the pad
@@ -73,46 +20,43 @@
 #define RX_CHAR_UUID "6f63746f-7061-4430-8001-000000000003"
 
 // Identity / naming. The brand tag is what the application uses to confirm it
-// is talking to a genuine OctoPad (over serial or Bluetooth); the device name
-// is user-configurable and stored in NVS, so a DIY build can be called anything.
-#define BRAND_TAG "OCTOPAD"
-#define FIRMWARE_VERSION "2.5"
+// is an OctoPad and learn the user-configured name. The name lives in NVS and
+// can be anything — the app finds the pad by its OctoPad signature, not a name.
+#define FIRMWARE_VERSION "2.6"
+#define DEVICE_BRAND "OCTOPAD"
 #define DEFAULT_DEVICE_NAME "OctoPad"
 #define MAX_DEVICE_NAME_LEN 24
 
-NimBLEServer* pServer = nullptr;
-NimBLECharacteristic* pTx = nullptr;
+// Timing defaults. These can be changed at runtime by the application with the
+// `TIMING:<debounce>,<click>,<hold>` command and are persisted in NVS.
+#define DEFAULT_DEBOUNCE_MS 25
+#define DEFAULT_CLICK_TIMEOUT_MS 250
+#define DEFAULT_HOLD_TIMEOUT_MS 450
 
-Preferences prefs;
-String deviceName = DEFAULT_DEVICE_NAME;
-
-constexpr uint8_t BUTTON_COUNT = 8;
-constexpr uint8_t MODE_BUTTON = 0; // B1 = GPIO20
-constexpr uint8_t LED_PIN = 4;
-
-// Accurate Timing Parameters for Human Fingers
-constexpr unsigned long DEBOUNCE_MS = 25;     // Mechanical switch bounce filter
-constexpr unsigned long CLICK_TIMEOUT = 250;  // Maximum interval BETWEEN TAPS (after release)
-constexpr unsigned long HOLD_TIMEOUT = 450;   // Press duration for the HOLD (Long Press) function
-
-const uint8_t buttonPins[BUTTON_COUNT] = {20, 9, 2, 1, 21, 10, 3, 0};
-
-// --- DESKTOP MODE LAYER ---
-// (Arrays are kept for SET/SAVE compatibility from the application; HID is no
-//  longer sent — all actions are executed by the application parsing event lines.)
-uint8_t cfg_desktopSingle[BUTTON_COUNT - 1] = {KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8};
-uint8_t cfg_desktopDouble[BUTTON_COUNT - 1] = {KEY_Q, KEY_W, KEY_E, KEY_I, KEY_T, KEY_Y, KEY_U};
-uint8_t cfg_desktopHold[BUTTON_COUNT - 1]   = {KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_H, KEY_J};
-
-// --- HOME ASSISTANT MODE LAYER ---
-uint8_t cfg_haSingle[BUTTON_COUNT - 1]  = {KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8};
-uint8_t cfg_haDouble[BUTTON_COUNT - 1]  = {KEY_Z,  KEY_X,  KEY_C,  KEY_V,  KEY_B,  KEY_N,  KEY_P};
-uint8_t cfg_haHold[BUTTON_COUNT - 1]    = {KEY_9,  KEY_0,  KEY_I,  KEY_O,  KEY_P,  KEY_K,  KEY_L};
+const uint8_t buttonPins[] = {20, 9, 2, 1, 21, 10, 3, 0};
+const uint8_t BUTTON_COUNT = sizeof(buttonPins) / sizeof(buttonPins[0]);
+const uint8_t MODE_BUTTON = 0;  // Button 1 toggles the layer
+const uint8_t LED_PIN = 4;      // On-board LED (active-high)
 
 enum MacroMode { DESKTOP_MODE, HOME_ASSISTANT_MODE };
+enum ButtonEvent { NONE, SINGLE_CLICK, DOUBLE_CLICK, HOLD };
+
+// Runtime-adjustable timings (persisted in NVS).
+uint16_t debounceMs = DEFAULT_DEBOUNCE_MS;
+uint16_t clickTimeoutMs = DEFAULT_CLICK_TIMEOUT_MS;
+uint16_t holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS;
+
 MacroMode currentMode = DESKTOP_MODE;
 
-enum ButtonEvent { NONE, SINGLE_CLICK, DOUBLE_CLICK, HOLD };
+String deviceName = DEFAULT_DEVICE_NAME;
+
+// Non-blocking LED feedback state machine.
+uint8_t ledTogglesRemaining = 0;
+unsigned long ledNextToggleAt = 0;
+
+NimBLEServer* pServer = nullptr;
+NimBLECharacteristic* pTx = nullptr;
+Preferences prefs;
 
 struct Button {
   uint8_t pin;
@@ -135,6 +79,8 @@ Button buttons[BUTTON_COUNT];
 String helloLine();
 void bleSend(const String& s);
 void applyDeviceName();
+void processCommand(const String& l);
+void blinkLED(uint8_t count);
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
@@ -147,14 +93,39 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   }
 };
 
+// Commands can also be sent over Bluetooth by writing to the RX characteristic.
+class CommandCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) override {
+    String value = String(characteristic->getValue().c_str());
+    value.trim();
+    if (value.length() > 0) {
+      processCommand(value);
+    }
+  }
+};
+
 String helloLine() {
-  return String("HELLO:") + BRAND_TAG + ":" + deviceName + ":v" + FIRMWARE_VERSION;
+  return String("HELLO:") + DEVICE_BRAND + ":" + deviceName + ":v" + FIRMWARE_VERSION;
 }
 
-void loadDeviceName() {
+// Reply on both transports; whichever link delivered the command (USB or BLE)
+// gets the answer, the other one simply ignores it.
+void respond(const String& s) {
+  Serial.println(s);
+  bleSend(s);
+}
+
+void loadSettings() {
   prefs.begin("mp", true);
+  uint8_t storedMode = prefs.getUChar("mode", 0);
+  debounceMs = prefs.getUShort("deb", DEFAULT_DEBOUNCE_MS);
+  clickTimeoutMs = prefs.getUShort("clk", DEFAULT_CLICK_TIMEOUT_MS);
+  holdTimeoutMs = prefs.getUShort("hld", DEFAULT_HOLD_TIMEOUT_MS);
   String stored = prefs.getString("name", DEFAULT_DEVICE_NAME);
   prefs.end();
+
+  currentMode = (storedMode == 1) ? HOME_ASSISTANT_MODE : DESKTOP_MODE;
+
   stored.trim();
   if (stored.length() == 0 || stored.length() > MAX_DEVICE_NAME_LEN) {
     stored = DEFAULT_DEVICE_NAME;
@@ -162,9 +133,13 @@ void loadDeviceName() {
   deviceName = stored;
 }
 
-void saveDeviceName(const String& name) {
+void saveSettings() {
   prefs.begin("mp", false);
-  prefs.putString("name", name);
+  prefs.putUChar("mode", currentMode == HOME_ASSISTANT_MODE ? 1 : 0);
+  prefs.putUShort("deb", debounceMs);
+  prefs.putUShort("clk", clickTimeoutMs);
+  prefs.putUShort("hld", holdTimeoutMs);
+  prefs.putString("name", deviceName);
   prefs.end();
 }
 
@@ -178,6 +153,7 @@ void setupBLE() {
                                   NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
   NimBLECharacteristic* pRx = svc->createCharacteristic(
       RX_CHAR_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+  pRx->setCallbacks(new CommandCallbacks());
   svc->start();
 
   // Expose the identity line as the TX characteristic's initial value so the
@@ -210,68 +186,50 @@ void bleSend(const String& s) {
   }
 }
 
-bool loadConfig() {
-  prefs.begin("mp", false);
-  if (!prefs.isKey("v")) {
-    prefs.end();
-    return false;
+void setMode(MacroMode mode, bool persist) {
+  currentMode = mode;
+  digitalWrite(LED_PIN, (mode == DESKTOP_MODE) ? HIGH : LOW);
+  if (persist) {
+    saveSettings();
   }
-  prefs.getBytes("d1", cfg_desktopSingle, 7);
-  prefs.getBytes("d2", cfg_desktopDouble, 7);
-  prefs.getBytes("dh", cfg_desktopHold, 7);
-  prefs.getBytes("h1", cfg_haSingle, 7);
-  prefs.getBytes("h2", cfg_haDouble, 7);
-  prefs.getBytes("hh", cfg_haHold, 7);
-  prefs.end();
-  return true;
-}
-
-void saveConfig() {
-  prefs.begin("mp", false);
-  prefs.putUChar("v", 1);
-  prefs.putBytes("d1", cfg_desktopSingle, 7);
-  prefs.putBytes("d2", cfg_desktopDouble, 7);
-  prefs.putBytes("dh", cfg_desktopHold, 7);
-  prefs.putBytes("h1", cfg_haSingle, 7);
-  prefs.putBytes("h2", cfg_haDouble, 7);
-  prefs.putBytes("hh", cfg_haHold, 7);
-  prefs.end();
 }
 
 void toggleMode() {
-  if (currentMode == DESKTOP_MODE) {
-    currentMode = HOME_ASSISTANT_MODE;
-    Serial.println("MODE: HOME ASSISTANT");
-    bleSend("MODE: HOME ASSISTANT");
-    digitalWrite(LED_PIN, LOW);
-  } else {
-    currentMode = DESKTOP_MODE;
-    Serial.println("MODE: DESKTOP");
-    bleSend("MODE: DESKTOP");
-    digitalWrite(LED_PIN, HIGH);
-  }
+  setMode((currentMode == DESKTOP_MODE) ? HOME_ASSISTANT_MODE : DESKTOP_MODE, true);
+  respond((currentMode == DESKTOP_MODE) ? "MODE: DESKTOP" : "MODE: HOME ASSISTANT");
 }
 
-// Dynamic LED Blink Function (Optimized to 80ms to reduce lag)
+// Start a non-blocking blink: the LED keeps blinking 80 ms on / 80 ms off while
+// the main loop stays free to keep debouncing and dispatching button events.
 void blinkLED(uint8_t count) {
-  bool baseState = digitalRead(LED_PIN);
-  for (uint8_t i = 0; i < count; i++) {
-    digitalWrite(LED_PIN, !baseState);
-    delay(80);
-    digitalWrite(LED_PIN, baseState);
-    delay(80);
+  ledTogglesRemaining = count * 2;
+  ledNextToggleAt = millis();
+}
+
+void updateLED() {
+  if (ledTogglesRemaining == 0) {
+    return;
+  }
+  unsigned long now = millis();
+  if ((long)(now - ledNextToggleAt) < 0) {
+    return;
+  }
+  bool base = (currentMode == DESKTOP_MODE);
+  digitalWrite(LED_PIN, (ledTogglesRemaining % 2 == 0) ? !base : base);
+  ledTogglesRemaining--;
+  ledNextToggleAt = now + 80;
+  if (ledTogglesRemaining == 0) {
+    digitalWrite(LED_PIN, base);
   }
 }
 
 void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
-  // 1. Mode Button (B1): a single click toggles the mode; HOLD is now managed by
-  //    the application (via event lines) just like the other buttons.
+  // 1. Mode button (Button 1): a single click toggles the layer.
   if (buttonIndex == MODE_BUTTON && event == SINGLE_CLICK) {
     toggleMode();
   }
 
-  // 2. Print Debug Log to Serial + send to BLE (identical format for
-  //    the application to parse over either the USB serial or Bluetooth path).
+  // 2. Emit the event line to both transports (identical format for the app).
   String modeText = (currentMode == DESKTOP_MODE) ? "DESKTOP" : "HA";
   String eventText = (event == SINGLE_CLICK) ? "SINGLE" : (event == DOUBLE_CLICK) ? "DOUBLE" : "HOLD";
   String line = String("[") + modeText + "] Button " + String(buttonIndex + 1) +
@@ -279,15 +237,111 @@ void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
   Serial.println(line);
   bleSend(line);
 
-  // 3. Global LED Feedback Rule for ANY Button (Including Button 1)
-  if (event == SINGLE_CLICK) {
-    // "Do nothing" -> LED does not blink, keeping the main light state.
+  // 3. Global LED feedback: double = 2 blinks, hold = 3 blinks, single = none.
+  if (event == DOUBLE_CLICK) {
+    blinkLED(2);
+  } else if (event == HOLD) {
+    blinkLED(3);
   }
-  else if (event == DOUBLE_CLICK) {
-    blinkLED(2); // Blink 2x for every Double Click
+}
+
+// ---------------------------------------------------------------------------
+// Command protocol (USB serial + BLE RX characteristic)
+//   WHO                 -> HELLO:OCTOPAD:<name>:v<version>
+//   VERSION             -> VERSION:OCTOPAD:<version>
+//   HELP                -> HELP:WHO,NAME,TIMING,MODE,SAVE,RESET,VERSION
+//   NAME:<text>         -> NAME:OK:<text> | NAME:ERR:length
+//   TIMING:<d>,<c>,<h>  -> TIMING:OK:<d>,<c>,<h> | TIMING:ERR
+//   MODE:DESKTOP|HA     -> MODE: DESKTOP | MODE: HOME ASSISTANT
+//   SAVE                -> SAVED
+//   RESET               -> RESET:OK (timings + mode restored, name kept)
+// ---------------------------------------------------------------------------
+void processCommand(const String& l) {
+  if (l.startsWith("WHO")) {
+    respond(helloLine());
+    return;
   }
-  else if (event == HOLD) {
-    blinkLED(3); // Blink 3x for every Long Press
+  if (l.startsWith("VERSION")) {
+    respond(String("VERSION:") + DEVICE_BRAND + ":" + FIRMWARE_VERSION);
+    return;
+  }
+  if (l.startsWith("HELP")) {
+    respond("HELP:WHO,NAME,TIMING,MODE,SAVE,RESET,VERSION");
+    return;
+  }
+  if (l.startsWith("NAME:")) {
+    String newName = l.substring(5);
+    newName.trim();
+    if (newName.length() > 0 && newName.length() <= MAX_DEVICE_NAME_LEN) {
+      deviceName = newName;
+      saveSettings();
+      respond(String("NAME:OK:") + newName);
+      applyDeviceName();
+    } else {
+      respond("NAME:ERR:length");
+    }
+    return;
+  }
+  if (l.startsWith("TIMING:")) {
+    String rest = l.substring(7);
+    int c1 = rest.indexOf(',');
+    int c2 = rest.indexOf(',', c1 + 1);
+    if (c1 > 0 && c2 > c1) {
+      long d = strtol(rest.substring(0, c1).c_str(), nullptr, 10);
+      long c = strtol(rest.substring(c1 + 1, c2).c_str(), nullptr, 10);
+      long h = strtol(rest.substring(c2 + 1).c_str(), nullptr, 10);
+      if (d >= 0 && d <= 200 && c >= 50 && c <= 2000 && h >= 100 && h <= 3000) {
+        debounceMs = (uint16_t)d;
+        clickTimeoutMs = (uint16_t)c;
+        holdTimeoutMs = (uint16_t)h;
+        saveSettings();
+        respond(String("TIMING:OK:") + d + "," + c + "," + h);
+        return;
+      }
+    }
+    respond("TIMING:ERR");
+    return;
+  }
+  if (l.startsWith("MODE:")) {
+    String target = l.substring(5);
+    target.trim();
+    target.toUpperCase();
+    if (target == "DESKTOP" || target == "HA" ||
+        target == "HOME ASSISTANT" || target == "HOME_ASSISTANT") {
+      bool wantHa = (target == "HA" || target == "HOME ASSISTANT" ||
+                     target == "HOME_ASSISTANT");
+      setMode(wantHa ? HOME_ASSISTANT_MODE : DESKTOP_MODE, true);
+      respond(wantHa ? "MODE: HOME ASSISTANT" : "MODE: DESKTOP");
+    } else {
+      respond("MODE:ERR");
+    }
+    return;
+  }
+  if (l.startsWith("SAVE")) {
+    saveSettings();
+    respond("SAVED");
+    return;
+  }
+  if (l.startsWith("RESET")) {
+    debounceMs = DEFAULT_DEBOUNCE_MS;
+    clickTimeoutMs = DEFAULT_CLICK_TIMEOUT_MS;
+    holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS;
+    setMode(DESKTOP_MODE, false);
+    saveSettings();
+    respond("RESET:OK");
+    return;
+  }
+  respond("ERR:UNKNOWN");
+}
+
+void handleCmd() {
+  if (!Serial.available()) {
+    return;
+  }
+  String l = Serial.readStringUntil('\n');
+  l.trim();
+  if (l.length() > 0) {
+    processCommand(l);
   }
 }
 
@@ -296,7 +350,6 @@ void setup() {
   delay(400);
 
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);
 
   for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
@@ -313,8 +366,8 @@ void setup() {
     buttons[i].isPressed = false;
   }
 
-  loadConfig();
-  loadDeviceName();
+  loadSettings();
+  digitalWrite(LED_PIN, (currentMode == DESKTOP_MODE) ? HIGH : LOW);
   setupBLE();
   Serial.print("BLE ");
   Serial.print(deviceName);
@@ -322,89 +375,21 @@ void setup() {
   Serial.println(helloLine());
 }
 
-void handleCmd() {
-  if (!Serial.available()) return;
-  String l = Serial.readStringUntil('\n');
-  l.trim();
-
-  if (l.startsWith("SET ")) {
-    // SET <key> <c0,c1,c2,c3,c4,c5,c6>
-    String rest = l.substring(4);
-    int sp = rest.indexOf(' ');
-    if (sp > 0) {
-      String key = rest.substring(0, sp);
-      String csv = rest.substring(sp + 1);
-      uint8_t* arr = nullptr;
-      if (key == "d1") arr = cfg_desktopSingle;
-      else if (key == "d2") arr = cfg_desktopDouble;
-      else if (key == "dh") arr = cfg_desktopHold;
-      else if (key == "h1") arr = cfg_haSingle;
-      else if (key == "h2") arr = cfg_haDouble;
-      else if (key == "hh") arr = cfg_haHold;
-      if (arr) {
-        int i = 0, s = 0;
-        while (i < 7 && s < (int)csv.length()) {
-          int e = csv.indexOf(',', s);
-          String tok = (e < 0) ? csv.substring(s) : csv.substring(s, e);
-          arr[i] = (uint8_t)strtol(tok.c_str(), nullptr, 10);
-          i++;
-          if (e < 0) break;
-          s = e + 1;
-        }
-        Serial.println(String("SET:") + key + ":OK");
-        return;
-      }
-    }
-    Serial.println("SET:ERR");
-    return;
-  }
-  if (l.startsWith("SAVE")) {
-    saveConfig();
-    Serial.println("SAVED");
-    return;
-  }
-  if (l.startsWith("NAME:")) {
-    // NAME:<new-name> — set + persist the device name, then restart BLE so
-    // the new name is advertised immediately (this drops any BLE link).
-    String newName = l.substring(5);
-    newName.trim();
-    if (newName.length() > 0 && newName.length() <= MAX_DEVICE_NAME_LEN) {
-      deviceName = newName;
-      saveDeviceName(newName);
-      Serial.println(String("NAME:OK:") + newName);
-      applyDeviceName();
-      Serial.println(helloLine());
-    } else {
-      Serial.println("NAME:ERR:length");
-    }
-    return;
-  }
-  if (l.startsWith("WHO")) {
-    Serial.println(helloLine());
-    return;
-  }
-  if (l.startsWith("RESET")) {
-    // keep defaults; save
-    saveConfig();
-    Serial.println("RESET+SAVED");
-    return;
-  }
-}
-
 void loop() {
   handleCmd();
+  updateLED();
   unsigned long now = millis();
 
   for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
     bool rawReading = digitalRead(buttons[i].pin);
 
-    // Debounce Filter
+    // Debounce filter
     if (rawReading != buttons[i].lastRawState) {
       buttons[i].lastDebounceTime = now;
       buttons[i].lastRawState = rawReading;
     }
 
-    if ((now - buttons[i].lastDebounceTime) >= DEBOUNCE_MS) {
+    if ((now - buttons[i].lastDebounceTime) >= debounceMs) {
       if (rawReading != buttons[i].stableState) {
         buttons[i].stableState = rawReading;
 
@@ -423,18 +408,18 @@ void loop() {
       }
     }
 
-    // HOLD Evaluation Logic
+    // HOLD evaluation
     if (buttons[i].isPressed && !buttons[i].holdReported) {
-      if (now - buttons[i].lastPressTime >= HOLD_TIMEOUT) {
+      if (now - buttons[i].lastPressTime >= holdTimeoutMs) {
         buttons[i].holdReported = true;
         buttons[i].clickCount = 0;
         handleButtonEvent(i, HOLD);
       }
     }
 
-    // Click Evaluation Logic (Single / Double)
+    // Single / double click evaluation
     if (!buttons[i].isPressed) {
-      if (buttons[i].clickCount == 1 && (now - buttons[i].lastReleaseTime >= CLICK_TIMEOUT)) {
+      if (buttons[i].clickCount == 1 && (now - buttons[i].lastReleaseTime >= clickTimeoutMs)) {
         handleButtonEvent(i, SINGLE_CLICK);
         buttons[i].clickCount = 0;
       }

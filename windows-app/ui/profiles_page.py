@@ -78,7 +78,7 @@ class ProfilesPage(QWidget):
 
         about = QGroupBox("About")
         about_layout = util.vbox(4, about)
-        about_layout.addWidget(QLabel("OctoPad v2.5"))
+        about_layout.addWidget(QLabel("OctoPad v2.6"))
         about_layout.addWidget(util.hint(
             "Native Windows application (PySide6) - 8 keys, Home Assistant REST, "
             "no scripts."))

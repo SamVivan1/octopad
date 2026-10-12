@@ -120,7 +120,7 @@ class OctoPadWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "About OctoPad",
-            "OctoPad v2.5\n\n"
+            "OctoPad v2.6\n\n"
             "Native Windows application for an 8-key serial macropad.\n"
             "Home Assistant REST integration and local action mapping,\n"
             "with no web server required.\n\n"

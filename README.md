@@ -1,11 +1,11 @@
-# 🎛️ OctoPad v2.5
+# 🎛️ OctoPad v2.6
 
 [![ESP32](https://img.shields.io/badge/Microcontroller-ESP32--C3-red.svg?logo=espressif)](https://www.espressif.com/)
 [![Connectivity](https://img.shields.io/badge/Connectivity-BLE%20HID%20%7C%20USB--Serial-blue.svg)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-0078D6.svg?logo=windows&logoColor=white)](https://github.com/SamVivan1/octopad)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**OctoPad v2.5** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
+**OctoPad v2.6** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
 
 ---
 
@@ -97,7 +97,8 @@ octopad/
 ├── octopad.ino          # Arduino / ESP32-C3 firmware
 ├── README.md                 # Main repository documentation
 ├── VERSION                   # Application version (used by the packaging CI)
-├── .github/workflows/        # CI: lint + build .deb/.exe (build.yml)
+├── .github/workflows/        # CI: lint + unit tests + build .deb/.exe
+├── tests/                    # pytest suite (config, parsers, TIMING sync)
 ├── packaging/deb/            # Debian package builder (build_deb.sh)
 ├── windows-app/              # Native Windows application (PySide6 / Qt6)
 │   ├── octopad.spec          # PyInstaller build definition (.exe)
@@ -198,7 +199,7 @@ details.
 Every update triggers the [`Build`](.github/workflows/build.yml) workflow, which
 produces a **`.deb`** for Linux (statically built with `packaging/deb/build_deb.sh`)
 and a **standalone `.exe`** for Windows (built with PyInstaller). Push a tag like
-`v2.5.0` and both files are attached to the GitHub **Release** automatically.
+`v2.6.0` and both files are attached to the GitHub **Release** automatically.
 
 - **Linux (.deb)** — install with:
   ```bash
@@ -225,8 +226,21 @@ on a small identity protocol so any name works:
 - **Rename your pad** from the app: **Settings → Device → Rename…** (over USB
   serial). The name is stored on the ESP32 (NVS) and survives reflashing the app.
   From the console you can also send `NAME:My Pad`.
-- Other commands: `WHO` (print the identity line), `SAVE`, `RESET`,
-  `SET <key> <c0..c6>`.
+- Device commands (accepted over USB serial **and** the Bluetooth RX
+  characteristic):
+
+  | Command | Reply | Effect |
+  | --- | --- | --- |
+  | `WHO` / `VERSION` | `HELLO:…` / `VERSION:…` | Print the identity line |
+  | `HELP` | `HELP:…` | List the supported commands |
+  | `NAME:<text>` | `NAME:OK:<text>` | Rename + persist the pad |
+  | `TIMING:<d>,<c>,<h>` | `TIMING:OK:…` | Set debounce / click / hold (ms) |
+  | `MODE:DESKTOP\|HA` | `MODE: …` | Switch layer + persist |
+  | `SAVE` | `SAVED` | Persist name, mode and timings |
+  | `RESET` | `RESET:OK` | Restore default timings + Desktop mode |
+
+  The app sends `TIMING:` automatically whenever it connects or saves, so the
+  pad always matches the values shown in **Settings → Timing Parameters**.
 
 To remove the application shortcut and icon from the Ubuntu system:
 ```bash

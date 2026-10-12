@@ -140,7 +140,7 @@ class SerialDaemonListener:
     def _default_config(self) -> Dict[str, Any]:
         """Default fallback configuration."""
         return {
-            "version": 2.5,
+            "version": 2.6,
             "modes": [
                 {
                     "id": "desktop",
@@ -212,8 +212,23 @@ class SerialDaemonListener:
             print(f"[DAEMON] [ERROR] Failed to send command: {e}")
             return False
 
+    def sync_timings(self) -> bool:
+        """Push the configured timing parameters to the firmware.
+
+        The firmware treats these as authoritative once received, so the USB/BLE
+        behaviour matches what the Settings page shows. Best effort: returns
+        False when the port is not open or the values are invalid.
+        """
+        try:
+            debounce = int(self.config.get("debounceMs", 25))
+            click = int(self.config.get("clickTimeoutMs", 250))
+            hold = int(self.config.get("holdTimeoutMs", 450))
+        except (TypeError, ValueError):
+            return False
+        return self.send_command(f"TIMING:{debounce},{click},{hold}", log=False)
+
     def rename_device(self, name: str) -> bool:
-        """Ask the firmware to adopt `name` as its device name (over serial)."""
+        """Ask the firmware to adopt `name` over serial."""
         name = name.strip()
         if not name or len(name) > 24:
             return False
@@ -299,11 +314,13 @@ class SerialDaemonListener:
                     print(f"[DAEMON] {msg}")
                     if self.on_event_callback:
                         self.on_event_callback(msg)
-                    # Learn/confirm the device name (harmless if already known).
+                    # Learn/confirm the device name and push the configured
+                    # timing parameters (both harmless if already known/set).
                     try:
                         self.ser.write(b"WHO\n")
                     except Exception:
                         pass
+                    self.sync_timings()
                 except Exception:
                     time.sleep(2)
                     continue

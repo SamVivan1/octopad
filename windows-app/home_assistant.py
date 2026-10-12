@@ -218,6 +218,12 @@ class HomeAssistantClient:
             os.makedirs(os.path.dirname(LOCAL_CONFIG), exist_ok=True)
             with open(LOCAL_CONFIG, "w", encoding="utf-8") as handle:
                 json.dump({"url": self.url, "token": self.token}, handle, indent=2)
+            # The file holds a long-lived access token: restrict it to the owner
+            # where the platform supports POSIX permissions (best effort).
+            try:
+                os.chmod(LOCAL_CONFIG, 0o600)
+            except OSError:
+                pass
             return True
         except Exception as exc:  # noqa: BLE001
             print(f"[HA] Error saving config: {exc}")

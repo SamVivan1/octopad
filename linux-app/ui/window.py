@@ -176,7 +176,7 @@ class OctoPadWindow(Adw.ApplicationWindow):
             transient_for=self,
             application_name="OctoPad",
             application_icon="octopad",
-            version="2.5",
+            version="2.6",
             developer_name="OctoPad Project",
             developers=["SamVivan", "OctoPad contributors"],
             license_type=Gtk.License.MIT_X11,

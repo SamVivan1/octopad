@@ -22,6 +22,11 @@ CONFIG_DIR = _appdata_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 PRESET_DIR = os.path.join(CONFIG_DIR, "presets")
 
+# Schema version of the stored configuration (independent of the product
+# version). Bump it whenever the on-disk shape changes and add the matching
+# upgrade step to migrate_config().
+CURRENT_SCHEMA_VERSION = 1
+
 # Physical pinout for buttons B1..B8 (same as octopad.ino)
 PINOUT = [20, 9, 2, 1, 21, 10, 3, 0]
 
@@ -158,7 +163,8 @@ def default_config() -> Dict[str, Any]:
         ha_buttons.append(_button(i + 1, label, default_action("home_assistant")))
 
     return {
-        "version": 2.5,
+        "version": 2.6,
+        "schemaVersion": CURRENT_SCHEMA_VERSION,
         "device": "OctoPad",
         "debounceMs": 25,
         "clickTimeoutMs": 250,
@@ -265,6 +271,29 @@ def normalize_config(data: Any) -> Tuple[bool, str]:
     return True, "OK"
 
 
+def migrate_config(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Upgrade a configuration dict to the current schema (in memory).
+
+    Migrations are applied in order based on the stored ``schemaVersion`` so an
+    old profile keeps working after a format change. New steps should append a
+    branch below and bump CURRENT_SCHEMA_VERSION.
+    """
+    if not isinstance(data, dict):
+        return data
+    try:
+        version = int(data.get("schemaVersion", 0))
+    except (TypeError, ValueError):
+        version = 0
+
+    if version < 1:
+        # Schema 0 = pre-versioning profiles: nothing structural to change yet,
+        # the loading code already fills in any missing default fields.
+        version = 1
+
+    data["schemaVersion"] = CURRENT_SCHEMA_VERSION
+    return data
+
+
 def load_config() -> Dict[str, Any]:
     """Load the configuration from disk (with defaults for missing keys)."""
     config = default_config()
@@ -280,7 +309,7 @@ def load_config() -> Dict[str, Any]:
     if not isinstance(stored, dict):
         return config
 
-    for key in ("version", "device", "debounceMs", "clickTimeoutMs",
+    for key in ("version", "schemaVersion", "device", "debounceMs", "clickTimeoutMs",
                 "holdTimeoutMs", "activeModeIndex", "activePreset"):
         if key in stored:
             config[key] = stored[key]
@@ -316,7 +345,7 @@ def load_config() -> Dict[str, Any]:
     if not (isinstance(active, int) and 0 <= active < len(config["modes"])):
         config["activeModeIndex"] = 0
 
-    return config
+    return migrate_config(config)
 
 
 def save_config(config: Dict[str, Any]) -> bool:

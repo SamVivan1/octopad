@@ -167,6 +167,7 @@ def set_config(new_config: Dict[str, Any], source: str = "editor") -> None:
     if listener is not None:
         try:
             listener.config = cfg
+            listener.sync_timings()
         except Exception as exc:
             print(f"[STATE] failed to apply config to listener: {exc}")
     emit("config-replaced", source=source)
@@ -256,6 +257,7 @@ def save() -> bool:
         if listener is not None:
             try:
                 listener.config = cfg
+                listener.sync_timings()
             except Exception as exc:
                 print(f"[STATE] failed to sync to listener: {exc}")
         emit("config-saved", ok=True)
@@ -285,6 +287,7 @@ def save_preset(name: str, overwrite: bool = False) -> bool:
         if listener is not None:
             try:
                 listener.config = cfg
+                listener.sync_timings()
             except Exception as exc:
                 print(f"[STATE] failed to sync to listener: {exc}")
         emit("presets-changed", name=preset_name)

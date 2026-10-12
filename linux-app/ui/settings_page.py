@@ -110,7 +110,7 @@ class ProfilesPage(Gtk.Box):
 
         info = Adw.PreferencesGroup(title="About")
         info.add(Adw.ActionRow(
-            title="OctoPad v2.5",
+            title="OctoPad v2.6",
             subtitle="Native GTK4 application for Ubuntu / GNOME — 8 keys, "
                      "Home Assistant REST, no scripts.",
         ))

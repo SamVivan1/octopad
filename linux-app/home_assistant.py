@@ -291,6 +291,11 @@ class HomeAssistantClient:
         try:
             with open(LOCAL_CONFIG, 'w', encoding='utf-8') as f:
                 json.dump({"url": self.url, "token": self.token}, f, indent=2)
+            # The file holds a long-lived access token: keep it owner-only.
+            try:
+                os.chmod(LOCAL_CONFIG, 0o600)
+            except OSError:
+                pass
             return True
         except Exception as e:
             print(f"[HA] Error saving config: {e}")
