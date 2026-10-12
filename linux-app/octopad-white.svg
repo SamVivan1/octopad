@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Monokrom putih: logo tray (bar gelap) -->
+
+  <!-- Outer Rounded Chassis -->
+  <rect x="36" y="56" width="440" height="400" rx="48" fill="#ffffff" stroke="#d4d4d8" stroke-width="6"/>
+  <rect x="44" y="64" width="424" height="384" rx="40" fill="none" stroke="#e4e4e7" stroke-width="2"/>
+
+  <!-- Status Glow Bar on Top -->
+  <rect x="76" y="90" width="360" height="12" rx="6" fill="#9a9aab"/>
+
+  <!-- Row 1 Keys -->
+  <!-- Key 1 (Mode Switch) -->
+  <rect x="76" y="130" width="76" height="110" rx="16" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+  <rect x="86" y="140" width="56" height="80" rx="10" fill="#e4e4e7"/>
+  <circle cx="114" cy="180" r="12" fill="#111113" opacity="0.9"/>
+
+  <!-- Key 2 -->
+  <rect x="170" y="130" width="76" height="110" rx="16" fill="#ffffff" stroke="#a1a1aa" stroke-width="3"/>
+  <rect x="180" y="140" width="56" height="80" rx="10" fill="#f4f4f5"/>
+
+  <!-- Key 3 (Active) -->
+  <rect x="264" y="130" width="76" height="110" rx="16" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+  <rect x="274" y="140" width="56" height="80" rx="10" fill="#e4e4e7"/>
+
+  <!-- Key 4 -->
+  <rect x="358" y="130" width="76" height="110" rx="16" fill="#ffffff" stroke="#a1a1aa" stroke-width="3"/>
+  <rect x="368" y="140" width="56" height="80" rx="10" fill="#f4f4f5"/>
+
+  <!-- Row 2 Keys -->
+  <!-- Key 5 -->
+  <rect x="76" y="270" width="76" height="110" rx="16" fill="#ffffff" stroke="#a1a1aa" stroke-width="3"/>
+  <rect x="86" y="280" width="56" height="80" rx="10" fill="#f4f4f5"/>
+
+  <!-- Key 6 -->
+  <rect x="170" y="270" width="76" height="110" rx="16" fill="#ffffff" stroke="#a1a1aa" stroke-width="3"/>
+  <rect x="180" y="280" width="56" height="80" rx="10" fill="#f4f4f5"/>
+
+  <!-- Key 7 -->
+  <rect x="264" y="270" width="76" height="110" rx="16" fill="#ffffff" stroke="#a1a1aa" stroke-width="3"/>
+  <rect x="274" y="280" width="56" height="80" rx="10" fill="#f4f4f5"/>
+
+  <!-- Key 8 -->
+  <rect x="358" y="270" width="76" height="110" rx="16" fill="#ffffff" stroke="#a1a1aa" stroke-width="3"/>
+  <rect x="368" y="280" width="56" height="80" rx="10" fill="#f4f4f5"/>
+
+  <!-- Bottom Brand Text -->
+  <text x="256" y="420" font-family="monospace" font-size="16" font-weight="bold" fill="#a1a1aa" text-anchor="middle" letter-spacing="4">SAMVIVAN PAD</text>
+</svg>
