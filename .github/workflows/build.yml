@@ -58,7 +58,7 @@ jobs:
           echo "OK: $DEB"
 
       - name: Upload .deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: octopad-deb
           path: dist/*.deb
@@ -96,7 +96,7 @@ jobs:
         run: Copy-Item dist/OctoPad.exe "dist/octopad_${{ needs.version.outputs.app }}_windows-x64.exe"
 
       - name: Upload .exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: octopad-exe
           path: windows-app/dist/octopad_*_windows-x64.exe
@@ -130,7 +130,7 @@ jobs:
           cp build/octopad.ino.bin "octopad_${{ needs.version.outputs.app }}_firmware.bin"
 
       - name: Upload firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: octopad-firmware
           path: octopad_*_firmware.bin
