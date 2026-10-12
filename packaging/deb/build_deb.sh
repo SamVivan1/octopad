@@ -173,7 +173,7 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: SamVivan and the OctoPad contributors <noreply@github.com>
 Installed-Size: $INSTALLED_SIZE
-Depends: python3 (>= 3.9), python3-gi, gir1.2-glib-2.0, gir1.2-gtk-4.0, gir1.2-adwaita-1, python3-serial
+Depends: python3 (>= 3.9), python3-gi, gir1.2-glib-2.0, gir1.2-gtk-4.0, gir1.2-adw-1 | gir1.2-adwaita-1, python3-serial
 Recommends: pipewire-bin | pulseaudio-utils
 Homepage: https://github.com/SamVivan1/octopad
 Description: Native desktop application for the OctoPad macropad
