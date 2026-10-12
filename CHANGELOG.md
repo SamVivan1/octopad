@@ -34,6 +34,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `DEFAULT_TIMINGS`), so USB and BLE always send an identical `TIMING` command;
   both bridge modules now reuse the serial `parse_hello()` instead of their own
   regex, and the unused `SerialDaemonListener.rename_device()` was removed.
+- **Bluetooth on Windows works with modern `bleak`** (1.x/2.x/3.x): the pad is
+  identified from its advertised service UUIDs through a version-tolerant
+  `_device_uuids()` helper, because bleak 1.x+ moved that data from
+  `device.metadata['uuids']` to `device.details` (BlueZ `props.UUIDs` /
+  WinRT `service_uuids`). The minimum is therefore `bleak>=1.0` and Python 3.10+.
 - Firmware watchdog (task WDT) reboots the pad automatically if the main loop
   ever hangs; added `INFO` (dump name/mode/timings) and `RESTART` commands.
 - Renaming the pad now works over **USB or Bluetooth** (Settings → Device).

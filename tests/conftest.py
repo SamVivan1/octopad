@@ -59,3 +59,18 @@ def linux_state():
     import state
 
     return state
+
+
+@pytest.fixture(scope="session")
+def windows_ble_bridge():
+    """Load the Windows BLE bridge without importing its PySide6 dependencies."""
+    # The module only imports PySide6/bleak inside functions, so loading it by
+    # path is safe (its `import state` / `import config` resolve to the Linux
+    # modules already in sys.modules, which these tests do not exercise).
+    return _load_from_path("win_ble_bridge",
+                           os.path.join(WINDOWS_APP, "ble_bridge.py"))
+
+
+@pytest.fixture(scope="session")
+def ble_bridge(windows_ble_bridge):
+    return windows_ble_bridge.BleBridge

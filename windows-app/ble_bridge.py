@@ -14,7 +14,7 @@ import os
 import re
 import threading
 import time
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import config as config_module
 import state
@@ -178,12 +178,45 @@ class BleBridge:
 
     @staticmethod
     def _is_pad(device, target_uuids) -> bool:
-        uuids = getattr(device, "metadata", {}).get("uuids") or []
-        uuids = {str(u).lower() for u in uuids}
-        if uuids & target_uuids:
+        if BleBridge._device_uuids(device) & target_uuids:
             return True
         name = (device.name or "").strip()
         return name.casefold() == DEFAULT_DEVICE_NAME.casefold()
+
+    @staticmethod
+    def _device_uuids(device) -> set:
+        """Advertised service UUIDs of ``device``, across bleak versions.
+
+        `bleak` exposes advertisement data differently depending on the release
+        and the platform: 0.x put it in ``device.metadata['uuids']``, BlueZ
+        (Linux) nests it in ``device.details['props']['UUIDs']`` and the Windows
+        WinRT backend returns an object with ``service_uuids``. The pad is
+        identified purely by its service UUID, so every shape has to work.
+        """
+        uuids: List[str] = []
+
+        def _collect(source: Any) -> None:
+            if isinstance(source, (list, tuple, set)):
+                uuids.extend(value for value in source if isinstance(value, str))
+
+        metadata = getattr(device, "metadata", None)
+        if isinstance(metadata, dict):
+            _collect(metadata.get("uuids"))
+            _collect(metadata.get("UUIDs"))
+
+        details = getattr(device, "details", None)
+        if isinstance(details, dict):
+            props = details.get("props")
+            if isinstance(props, dict):
+                _collect(props.get("UUIDs"))
+                _collect(props.get("uuids"))
+            for key in ("UUIDs", "uuids", "service_uuids"):
+                _collect(details.get(key))
+        else:
+            for attr in ("service_uuids", "uuids", "UUIDs"):
+                _collect(getattr(details, attr, None))
+
+        return {uuid.lower() for uuid in uuids}
 
     async def _connect(self, device) -> None:
         from bleak import BleakClient

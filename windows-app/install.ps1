@@ -19,7 +19,7 @@ foreach ($candidate in @("py -3", "python", "python3")) {
     if ($exe) { $python = $candidate; break }
 }
 if (-not $python) {
-    Write-Error "Python 3.9+ not found. Install it from https://python.org and retry."
+    Write-Error "Python 3.10+ not found. Install it from https://python.org and retry."
     exit 1
 }
 

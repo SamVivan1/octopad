@@ -181,7 +181,7 @@ No IP, token, or entity is hardcoded in the source:
 
 ### 🪟 Running as a Native Windows Application (Recommended)
 The Windows port mirrors the Linux app feature-for-feature with **PySide6 / Qt6**
-and needs **Python 3.9+**:
+and needs **Python 3.10+** (required by `bleak` 1.x and later):
 1. **Install** — open PowerShell in `windows-app` and run:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1
