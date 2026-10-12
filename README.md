@@ -101,7 +101,8 @@ octopad/
 ├── tests/                    # pytest suite (config, parsers, TIMING sync)
 ├── scripts/                  # Developer helpers
 │   ├── build_firmware.sh     # Build/flash firmware with arduino-cli
-│   └── check.sh              # Run pyflakes + compileall + pytest (+ firmware)
+│   ├── check.sh              # Run pyflakes + compileall + pytest (+ firmware)
+│   └── smoke_windows.py      # Headless Qt smoke test for the Windows app
 ├── packaging/deb/            # Debian package builder (build_deb.sh)
 ├── windows-app/              # Native Windows application (PySide6 / Qt6)
 │   ├── octopad.spec          # PyInstaller build definition (.exe)
@@ -316,6 +317,15 @@ tests + firmware compile):
 
 ```bash
 scripts/check.sh
+```
+
+Because the Windows app is Qt, it can also be exercised headlessly — this builds
+the main window, every page and dialog without a display (used by CI to validate
+the Windows app on every pull request):
+
+```bash
+pip install -r windows-app/requirements.txt
+python scripts/smoke_windows.py
 ```
 
 ---

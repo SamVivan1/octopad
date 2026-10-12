@@ -23,6 +23,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Developer scripts: `scripts/build_firmware.sh` (compile/flash via `arduino-cli`
   with pinned core/library versions) and `scripts/check.sh` (pyflakes +
   compileall + pytest + firmware compile), documented in the README.
+- **Headless smoke test for the Windows app** (`scripts/smoke_windows.py`): runs
+  the real PySide6 UI with Qt's `offscreen` platform plugin and builds the main
+  window, all pages and all dialogs. A new CI job runs it on every change, so
+  UI construction is validated on Linux without a display or a Windows machine.
+- CI dependencies bumped and verified one-by-one (GitHub Actions:
+  `checkout` v4→v7, `setup-python` v5→v7, `upload-artifact` v4→v7,
+  `download-artifact` v4→v8, `arduino/setup-arduino-cli` v1→v2); `bleak` pinned
+  to `>=1.0`.
 
 ### Changed
 - The applications can now **send commands over Bluetooth** as well: the Linux
