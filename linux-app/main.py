@@ -73,14 +73,15 @@ _BUTTON_RE = re.compile(
 # ---------------------------------------------------------------------------
 def _handle_serial_line(line: str) -> bool:
     import state
-    from serial_listener import parse_hello_line
+    from serial_listener import parse_hello
 
     state.emit("serial-log", line=line)
 
-    # Identity line from the firmware: learn the user-configured pad name.
-    hello = parse_hello_line(line)
+    # Identity line from the firmware: learn the pad name and firmware version.
+    hello = parse_hello(line)
     if hello is not None:
-        state.set_device_name(hello)
+        state.set_device_name(hello["name"])
+        state.set_firmware_version(hello["version"])
 
     upper = line.upper()
     if "MODE: HOME ASSISTANT" in upper:

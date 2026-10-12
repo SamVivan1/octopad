@@ -44,13 +44,14 @@ QStatusBar { background: #242424; }
 
 def _handle_serial_line(line: str) -> None:
     import state
-    from serial_listener import parse_hello_line
+    from serial_listener import parse_hello
 
     state.emit("serial-log", line=line)
 
-    hello = parse_hello_line(line)
+    hello = parse_hello(line)
     if hello is not None:
-        state.set_device_name(hello)
+        state.set_device_name(hello["name"])
+        state.set_firmware_version(hello["version"])
 
     match = _BUTTON_RE.search(line)
     if match:

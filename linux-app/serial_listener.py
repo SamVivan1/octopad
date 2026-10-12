@@ -26,7 +26,8 @@ EVENT_PATTERN = re.compile(
 # Identity line printed by the firmware: HELLO:OCTOPAD:<device-name>:v<version>
 BRAND_TAG = "OCTOPAD"
 HELLO_PATTERN = re.compile(
-    r'HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::[^\n]*)?', re.IGNORECASE)
+    r'HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::v?([0-9][0-9A-Za-z._-]*))?',
+    re.IGNORECASE)
 
 # How long to wait for a HELLO reply when probing a serial port.
 PROBE_TIMEOUT_S = 2.0
@@ -51,10 +52,19 @@ def parse_hello_line(line: str) -> Optional[str]:
     the brand tag confirms the sender is a genuine OctoPad regardless of the
     user-configured name.
     """
+    info = parse_hello(line)
+    return info["name"] if info else None
+
+
+def parse_hello(line: str) -> Optional[Dict[str, str]]:
+    """Parse an identity line into ``{"name": ..., "version": ...}``."""
     match = HELLO_PATTERN.search(line)
     if not match or match.group(1).upper() != BRAND_TAG:
         return None
-    return match.group(2).strip() or "OctoPad"
+    return {
+        "name": match.group(2).strip() or "OctoPad",
+        "version": (match.group(3) or "").strip(),
+    }
 
 
 def execute_button_trigger(config: Dict[str, Any],

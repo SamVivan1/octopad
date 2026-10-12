@@ -81,7 +81,8 @@ _LINE_PATTERN = re.compile(
 
 # Identity line: HELLO:OCTOPAD:<device-name>:v<version>
 _HELLO_PATTERN = re.compile(
-    r'HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::[^\n]*)?', re.IGNORECASE)
+    r'HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::v?([0-9][0-9A-Za-z._-]*))?',
+    re.IGNORECASE)
 
 
 class BleBridge:
@@ -578,6 +579,7 @@ class BleBridge:
         match = _HELLO_PATTERN.search(line)
         if match and match.group(1).upper() == BRAND_TAG:
             state.set_device_name(match.group(2).strip() or DEFAULT_DEVICE_NAME)
+            state.set_firmware_version((match.group(3) or "").strip())
             return
 
         event = parse_event_line(line)

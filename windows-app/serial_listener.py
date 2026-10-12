@@ -30,7 +30,8 @@ EVENT_PATTERN = re.compile(
 
 BRAND_TAG = "OCTOPAD"
 HELLO_PATTERN = re.compile(
-    r"HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::[^\n]*)?", re.IGNORECASE)
+    r"HELLO:([A-Za-z0-9_-]+):([^:\n]*)(?::v?([0-9][0-9A-Za-z._-]*))?",
+    re.IGNORECASE)
 
 PROBE_TIMEOUT_S = 2.0
 
@@ -52,14 +53,23 @@ def parse_event_line(line: str):
     }
 
 
-def parse_hello_line(line: str) -> Optional[str]:
-    """Extract the device name from an identity line, else None."""
+def parse_hello(line: str) -> Optional[Dict[str, str]]:
+    """Extract the pad name and firmware version from an identity line."""
     match = HELLO_PATTERN.search(line)
     if not match:
         return None
     if match.group(1).upper() != BRAND_TAG:
         return None
-    return match.group(2).strip() or "OctoPad"
+    return {
+        "name": match.group(2).strip() or "OctoPad",
+        "version": (match.group(3) or "").strip(),
+    }
+
+
+def parse_hello_line(line: str) -> Optional[str]:
+    """Extract the device name from an identity line, else None."""
+    info = parse_hello(line)
+    return info["name"] if info else None
 
 
 def execute_button_trigger(config: Dict[str, Any], mode: str, button_index: int,

@@ -75,6 +75,7 @@ serial_port: Optional[str] = None
 serial_connected: bool = False
 
 device_name: Optional[str] = None
+firmware_version: Optional[str] = None
 
 ble_connected: bool = False
 ble_message: str = ""
@@ -408,3 +409,12 @@ def set_device_name(name: Optional[str]) -> None:
         return
     device_name = name
     emit("device-name-changed", name=name)
+
+
+def set_firmware_version(version: Optional[str]) -> None:
+    global firmware_version
+    version = (version or "").strip() or None
+    if version == firmware_version:
+        return
+    firmware_version = version
+    emit("device-info-changed", version=version)

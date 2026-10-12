@@ -29,6 +29,20 @@ def test_parse_hello_defaults_when_unnamed(serial_listener):
     assert serial_listener.parse_hello_line("HELLO:OCTOPAD::v2.6") == "OctoPad"
 
 
+def test_parse_hello_extracts_version(serial_listener):
+    info = serial_listener.parse_hello("HELLO:OCTOPAD:My Pad:v2.6")
+    assert info == {"name": "My Pad", "version": "2.6"}
+
+
+def test_parse_hello_without_version(serial_listener):
+    info = serial_listener.parse_hello("HELLO:OCTOPAD:My Pad")
+    assert info == {"name": "My Pad", "version": ""}
+
+
+def test_parse_hello_bad_brand(serial_listener):
+    assert serial_listener.parse_hello("HELLO:OTHER:Pad:v1") is None
+
+
 def test_sync_timings_formats_command(serial_listener):
     listener = serial_listener.SerialDaemonListener()
     listener.config = {

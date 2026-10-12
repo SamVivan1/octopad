@@ -348,8 +348,11 @@ class SettingsPage(Gtk.Box):
     # ------------------------------------------------------------------
     def _sync_device(self) -> None:
         if state.device_name:
-            self.device_row.set_subtitle(f"“{state.device_name}”")
-        elif state.serial_connected:
+            text = f"“{state.device_name}”"
+            if state.firmware_version:
+                text += f" — firmware v{state.firmware_version}"
+            self.device_row.set_subtitle(text)
+        elif state.serial_connected or state.ble_connected:
             self.device_row.set_subtitle("Connected — unknown firmware")
         else:
             self.device_row.set_subtitle("Not connected")
@@ -409,7 +412,8 @@ class SettingsPage(Gtk.Box):
                                         f"({state.ha_entity_source})")
 
     def _on_state_event(self, event: str, **_data: Any) -> None:
-        if event in ("device-name-changed", "serial-status-changed"):
+        if event in ("device-name-changed", "device-info-changed",
+                     "serial-status-changed", "ble-status-changed"):
             self._sync_device()
         elif event in ("ha-status-changed", "ha-entities-changed"):
             self._sync_ha()

@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Firmware watchdog (task WDT) reboots the pad automatically if the main loop
   ever hangs; added `INFO` (dump name/mode/timings) and `RESTART` commands.
 - Renaming the pad now works over **USB or Bluetooth** (Settings → Device).
+- Settings now shows the pad's **firmware version**, learned from the identity
+  (`HELLO`) line over both USB and Bluetooth.
 - Version bumped to 2.6 (firmware, apps, `VERSION`).
 - CI now compiles the firmware (`arduino-cli`, ESP32-C3) and attaches
   `octopad_*_firmware.bin` to GitHub Releases; a dedicated `Firmware` workflow

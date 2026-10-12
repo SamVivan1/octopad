@@ -117,8 +117,11 @@ class SettingsPage(QWidget):
         self.ha_entity_row.setText(f"{len(state.ha_entities)} entities")
         self.apps_row.setText(f"{len(state.installed_apps)} applications")
         if state.device_name:
-            self.device_row.setText(f"Name: {state.device_name}")
-        elif state.serial_connected:
+            text = f"Name: {state.device_name}"
+            if state.firmware_version:
+                text += f" (firmware v{state.firmware_version})"
+            self.device_row.setText(text)
+        elif state.serial_connected or state.ble_connected:
             self.device_row.setText("Connected (name unknown)")
         else:
             self.device_row.setText("Not connected")
@@ -130,8 +133,9 @@ class SettingsPage(QWidget):
             self.ha_entity_row.setText(f"{len(state.ha_entities)} entities")
         elif event == "apps-changed":
             self.apps_row.setText(f"{len(state.installed_apps)} applications")
-        elif event == "device-name-changed":
-            self.device_row.setText(state.device_name or "Not connected")
+        elif event in ("device-name-changed", "device-info-changed",
+                       "serial-status-changed", "ble-status-changed"):
+            self._sync_state()
 
     # ------------------------------------------------------------------
     def _on_ha_connect(self) -> None:
