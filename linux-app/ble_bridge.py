@@ -27,11 +27,13 @@ from serial_listener import execute_button_trigger, parse_event_line
 
 SERVICE_UUID = "6f63746f-7061-4430-8001-000000000001"
 TX_UUID = "6f63746f-7061-4430-8001-000000000002"
+RX_UUID = "6f63746f-7061-4430-8001-000000000003"
 
 # Firmware before the rebrand advertised the Nordic-UART UUIDs. Accept them too
 # so existing hand-built pads keep working after an app update.
 LEGACY_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 LEGACY_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+LEGACY_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
 # Brand tag carried by the identity line (HELLO:<tag>:<name>:v<ver>) and the
 # default device name used when the user has not renamed their pad.
@@ -94,6 +96,7 @@ class BleBridge:
         self._bus: Optional[Gio.DBusConnection] = None
         self._device_path: Optional[str] = None
         self._tx_path: Optional[str] = None
+        self._rx_path: Optional[str] = None
         self._notify_fd: Optional[int] = None
         self._pending = ""
         self._connected = False
@@ -121,6 +124,36 @@ class BleBridge:
                 self._loop.quit()
             except Exception as exc:  # noqa: BLE001
                 _log(f"Failed to stop loop: {exc}")
+
+    def send_command(self, command: str, log: bool = True) -> bool:
+        """Write a text command to the pad over Bluetooth (RX characteristic).
+
+        Mirrors ``SerialDaemonListener.send_command`` so the state layer can use
+        either transport transparently.
+        """
+        if not self._connected or not self._rx_path or self._bus is None:
+            return False
+        payload = (command.strip() + "\n").encode("utf-8")
+        try:
+            self._call(self._rx_path, _GCHAR, "WriteValue",
+                       GLib.Variant("(aya{sv})", (payload, {})), timeout_ms=5000)
+            if log:
+                state.emit("serial-log", line=f"[TX-BLE] {command.strip()}")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            _log(f"BLE write failed: {exc}")
+            return False
+
+    def sync_timings(self) -> bool:
+        """Push the configured timing parameters to the wireless pad."""
+        cfg = getattr(state, "cfg", None) or {}
+        try:
+            debounce = int(cfg.get("debounceMs", 25))
+            click = int(cfg.get("clickTimeoutMs", 250))
+            hold = int(cfg.get("holdTimeoutMs", 450))
+        except (TypeError, ValueError):
+            return False
+        return self.send_command(f"TIMING:{debounce},{click},{hold}", log=False)
 
     def _set_status(self, connected: bool, message: str) -> None:
         """Update UI status, logging only when it actually changes."""
@@ -259,6 +292,10 @@ class BleBridge:
             return
         self._tx_path = tx_path
 
+        # Locate the RX (write) characteristic as well so commands can be sent
+        # over Bluetooth (best effort: a pad without an RX char still works).
+        self._rx_path = self._find_rx_path(objects, device_path)
+
         # 6. Read the TX value: the firmware exposes its identity line
         #    (HELLO:OCTOPAD:<name>:v<ver>) there, so we learn the pad's
         #    user-configured name as soon as we connect.
@@ -272,8 +309,11 @@ class BleBridge:
             return
         self._connected = True
         self._reconnect_delay = _RECONNECT_S
-        _log(f"connected device={device_path} tx={tx_path}")
+        _log(f"connected device={device_path} tx={tx_path} rx={self._rx_path}")
         self._set_status(True, "Connected via Bluetooth")
+        # Push the configured timing parameters so the wireless pad matches the
+        # app's Settings page (no-op if the firmware is too old for TIMING).
+        self.sync_timings()
 
     def _read_tx_value(self, tx_path: str) -> None:
         """Read the TX characteristic once to fetch the identity (HELLO) line."""
@@ -372,6 +412,7 @@ class BleBridge:
         was_connected = self._connected
         self._close_notify()
         self._connected = False
+        self._rx_path = None
         if was_connected:
             _log("link dropped — will retry")
             self._set_status(False, "Pad disconnected — retrying…")
@@ -473,6 +514,18 @@ class BleBridge:
             return res.unpack()[0]
         except Exception:  # noqa: BLE001
             return {}
+
+    def _find_rx_path(self, objects, device_path: str) -> Optional[str]:
+        """Locate the writable (RX) characteristic of our service, if present."""
+        for path, ifaces in objects.items():
+            char = ifaces.get(_GCHAR)
+            if not char or char.get("UUID") not in (RX_UUID, LEGACY_RX_UUID):
+                continue
+            service_path = path.rsplit("/", 1)[0]
+            service = objects.get(service_path, {}).get(_GSVC)
+            if service and service.get("UUID") in (SERVICE_UUID, LEGACY_SERVICE_UUID):
+                return path
+        return None
 
     def _find_tx_path(self, objects, device_path: str) -> Optional[str]:
         service_path = None

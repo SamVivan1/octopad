@@ -199,6 +199,7 @@ class OctoPadApplication(Adw.Application):
         try:
             from ble_bridge import BleBridge
             self.ble = BleBridge(on_event_callback=_on_serial_line)
+            state.ble = self.ble
             self.ble.start()
         except Exception as exc:  # noqa: BLE001
             print(f"[APP] BLE bridge unavailable: {exc}")

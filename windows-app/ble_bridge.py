@@ -71,6 +71,7 @@ class BleBridge:
         self._stop_event: Optional[asyncio.Event] = None
         self._running = False
         self._client = None
+        self._rx_char = None
         self._connected = False
         self._pending = ""
         self._reconnect_delay = _RECONNECT_S
@@ -214,8 +215,14 @@ class BleBridge:
             _log(f"TX read failed: {exc}")
 
         self._pending = ""
+        self._rx_char = self._find_rx_characteristic(client)
         await client.start_notify(characteristic, self._on_notify)
         self._connected = True
+        # Push the configured timing parameters so the wireless pad matches the
+        # app's Settings page (no-op if the firmware is too old for TIMING).
+        command = self._timing_command()
+        if command:
+            await self._write(command, log=False)
 
     def _find_tx_characteristic(self, client):
         wanted = {TX_UUID.lower(), LEGACY_TX_UUID.lower()}
@@ -227,6 +234,58 @@ class BleBridge:
         except Exception as exc:  # noqa: BLE001
             _log(f"service discovery failed: {exc}")
         return None
+
+    def _find_rx_characteristic(self, client):
+        try:
+            for service in client.services:
+                for characteristic in service.characteristics:
+                    if str(characteristic.uuid).lower() == RX_UUID.lower():
+                        return characteristic
+        except Exception as exc:  # noqa: BLE001
+            _log(f"RX discovery failed: {exc}")
+        return None
+
+    @staticmethod
+    def _timing_command() -> Optional[str]:
+        cfg = getattr(state, "cfg", None) or {}
+        try:
+            debounce = int(cfg.get("debounceMs", 25))
+            click = int(cfg.get("clickTimeoutMs", 250))
+            hold = int(cfg.get("holdTimeoutMs", 450))
+        except (TypeError, ValueError):
+            return None
+        return f"TIMING:{debounce},{click},{hold}"
+
+    async def _write(self, command: str, log: bool = True) -> None:
+        client = self._client
+        if client is None or self._rx_char is None:
+            return
+        payload = (command.strip() + "\n").encode("utf-8")
+        try:
+            await client.write_gatt_char(self._rx_char, payload, response=False)
+            if log:
+                state.emit("serial-log", line=f"[TX-BLE] {command.strip()}")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"BLE write failed: {exc}")
+
+    def send_command(self, command: str, log: bool = True) -> bool:
+        """Queue a command to the pad over Bluetooth (thread-safe)."""
+        loop = self._loop
+        if not self._running or not self._connected or self._rx_char is None or loop is None:
+            return False
+        try:
+            asyncio.run_coroutine_threadsafe(self._write(command, log=log), loop)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            _log(f"BLE write scheduling failed: {exc}")
+            return False
+
+    def sync_timings(self) -> bool:
+        """Push the configured timing parameters to the wireless pad."""
+        command = self._timing_command()
+        if not command:
+            return False
+        return self.send_command(command, log=False)
 
     def _on_notify(self, _characteristic, data: bytes) -> None:
         self._pending += bytes(data).decode("utf-8", errors="ignore")

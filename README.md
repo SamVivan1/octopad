@@ -242,8 +242,9 @@ on a small identity protocol so any name works:
   | `SAVE` | `SAVED` | Persist name, mode and timings |
   | `RESET` | `RESET:OK` | Restore default timings + Desktop mode |
 
-  The app sends `TIMING:` automatically whenever it connects or saves, so the
-  pad always matches the values shown in **Settings → Timing Parameters**.
+  The app sends `TIMING:` automatically whenever it connects or saves, over
+  **whichever link is active** (USB serial or Bluetooth), so the pad always
+  matches the values shown in **Settings → Timing Parameters**.
 
 To remove the application shortcut and icon from the Ubuntu system:
 ```bash

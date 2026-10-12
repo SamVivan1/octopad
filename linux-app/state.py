@@ -49,8 +49,24 @@ ble_connected: bool = False
 ble_message: str = ""
 
 listener: Any = None         # SerialDaemonListener (set by main.py)
+ble: Any = None              # BleBridge (set by main.py)
 
 _subscribers: List[Callable[..., None]] = []
+
+
+def _sync_timings() -> None:
+    """Push the current timing parameters to every connected transport.
+
+    The serial listener and the BLE bridge each expose ``sync_timings``; either
+    may be absent or not connected, so failures are ignored on purpose.
+    """
+    for target in (listener, ble):
+        if target is None:
+            continue
+        try:
+            target.sync_timings()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[STATE] failed to sync timings: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +164,7 @@ def set_config(new_config: Dict[str, Any], source: str = "editor") -> None:
     if listener is not None:
         try:
             listener.config = cfg
-            listener.sync_timings()
+            _sync_timings()
         except Exception as exc:
             print(f"[STATE] failed to apply config to listener: {exc}")
     emit("config-replaced", source=source)
@@ -243,7 +259,7 @@ def save() -> bool:
         if listener is not None:
             try:
                 listener.config = cfg
-                listener.sync_timings()
+                _sync_timings()
             except Exception as exc:
                 print(f"[STATE] failed to sync to listener: {exc}")
         emit("config-saved", ok=True)
@@ -278,7 +294,7 @@ def save_preset(name: str, overwrite: bool = False) -> bool:
         if listener is not None:
             try:
                 listener.config = cfg
-                listener.sync_timings()
+                _sync_timings()
             except Exception as exc:
                 print(f"[STATE] failed to sync to listener: {exc}")
         emit("config-saved", ok=True, preset=preset_name)

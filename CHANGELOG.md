@@ -22,6 +22,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   parsers and the `TIMING` sync, wired into CI.
 
 ### Changed
+- The applications can now **send commands over Bluetooth** as well: the Linux
+  (BlueZ D-Bus `WriteValue`) and Windows (bleak `write_gatt_char`) bridges write
+  to the RX characteristic, so timing sync works on a fully wireless setup.
 - Firmware LED feedback is now **non-blocking**: double/hold feedback no longer
   stalls button handling for up to ~480 ms.
 - Version bumped to 2.6 (firmware, apps, `VERSION`).

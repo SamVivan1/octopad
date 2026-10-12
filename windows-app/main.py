@@ -142,6 +142,7 @@ class OctoPadApp:
     def _start_ble(self) -> None:
         from ble_bridge import BleBridge
         self.ble = BleBridge(on_event_callback=_handle_serial_line)
+        self.state.ble = self.ble
         self.ble.start()
 
     def _start_tray(self) -> None:
