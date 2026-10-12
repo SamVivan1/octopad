@@ -36,6 +36,16 @@ class ConsolePage(QWidget):
         top.addWidget(clear)
         layout.addLayout(top)
 
+        quick = QHBoxLayout()
+        quick.addWidget(QLabel("Quick:"))
+        for label, command in (("Who", "WHO"), ("Info", "INFO"),
+                               ("Save", "SAVE"), ("Help", "HELP")):
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked=False, c=command: self._send_command(c))
+            quick.addWidget(btn)
+        quick.addStretch(1)
+        layout.addLayout(quick)
+
         self.view = QPlainTextEdit()
         self.view.setReadOnly(True)
         layout.addWidget(self.view, 1)
@@ -99,16 +109,16 @@ class ConsolePage(QWidget):
         self._line_count = 0
 
     def _on_send(self) -> None:
-        text = self.entry.text().strip()
+        self._send_command(self.entry.text().strip())
+
+    def _send_command(self, text: str) -> None:
         if not text:
             return
-        listener = state.listener
-        ok = False
-        if listener is not None:
-            try:
-                ok = bool(listener.send_command(text))
-            except Exception as exc:  # noqa: BLE001
-                self.window.show_toast(f"Failed to send: {exc}", "error")
+        try:
+            ok = state.send_device_command(text)
+        except Exception as exc:  # noqa: BLE001
+            self.window.show_toast(f"Failed to send: {exc}", "error")
+            return
         if ok:
             self.entry.clear()
             self._append_line(f"> {text}", "tx")
@@ -121,8 +131,10 @@ class ConsolePage(QWidget):
         if state.serial_connected:
             self.status_label.setText(
                 f"Serial: connected at {state.serial_port or '?'} (115200 baud)")
+        elif state.ble_connected:
+            self.status_label.setText("Bluetooth: connected")
         else:
-            self.status_label.setText("Serial: waiting for macropad to connect...")
+            self.status_label.setText("Waiting for macropad (USB or Bluetooth)...")
 
     def _on_state_event(self, event: str, **data: Any) -> None:
         if event == "serial-log":
@@ -132,3 +144,5 @@ class ConsolePage(QWidget):
             if data.get("connected"):
                 self._append_line(
                     f"[HARDWARE] Connected at {data.get('port') or '?'}", "system")
+        elif event == "ble-status-changed":
+            self._sync_status()

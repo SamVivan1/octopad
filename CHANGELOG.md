@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Firmware watchdog (task WDT) reboots the pad automatically if the main loop
   ever hangs; added `INFO` (dump name/mode/timings) and `RESTART` commands.
 - Renaming the pad now works over **USB or Bluetooth** (Settings → Device).
+- Console: quick-command buttons (Who/Info/Save/Help) and command sending that
+  uses whichever transport is connected (USB or Bluetooth), not just USB.
 - Settings now shows the pad's **firmware version**, learned from the identity
   (`HELLO`) line over both USB and Bluetooth.
 - Version bumped to 2.6 (firmware, apps, `VERSION`).

@@ -26,6 +26,13 @@ class ConsolePage(Gtk.Box):
                                on_clicked=self._on_clear))
         self.append(top)
 
+        quick = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        quick.append(util.label("Quick:", css=["mp-hint"]))
+        for label, command in (("Who", "WHO"), ("Info", "INFO"),
+                               ("Save", "SAVE"), ("Help", "HELP")):
+            quick.append(self._quick_button(label, command))
+        self.append(quick)
+
         self.view = Gtk.TextView(editable=False, cursor_visible=False,
                                  wrap_mode=Gtk.WrapMode.CHAR, monospace=True)
         self.view.set_css_classes(["mp-console"])
@@ -110,30 +117,40 @@ class ConsolePage(Gtk.Box):
         self.view.get_buffer().set_text("")
         self._line_count = 0
 
+    def _quick_button(self, label: str, command: str):
+        return util.button(label, None, None, self._on_quick, command)
+
+    def _on_quick(self, _btn, command: str) -> None:
+        self._send_command(command)
+
     def _on_send(self, *_args) -> None:
-        text = self.entry.get_text().strip()
+        self._send_command(self.entry.get_text().strip())
+
+    def _send_command(self, text: str) -> None:
         if not text:
             return
-        listener = state.listener
-        ok = False
-        if listener is not None:
-            try:
-                ok = bool(listener.send_command(text))
-            except Exception as exc:  # noqa: BLE001
-                self.window.show_toast(f"Failed to send: {exc}", "error")
+        try:
+            ok = state.send_device_command(text)
+        except Exception as exc:  # noqa: BLE001
+            self.window.show_toast(f"Failed to send: {exc}", "error")
+            return
         if ok:
             self.entry.set_text("")
             self._append_line(f"> {text}", "tx")
         else:
-            self.window.show_toast("Serial port not open — connect the macropad first.", "error")
+            self.window.show_toast(
+                "No active connection — connect the macropad (USB or Bluetooth).",
+                "error")
 
     # ------------------------------------------------------------------
     def _sync_status(self) -> None:
         if state.serial_connected:
             self.status_label.set_text(
                 f"Serial: connected at {state.serial_port or '?'} (115200 baud)")
+        elif state.ble_connected:
+            self.status_label.set_text("Bluetooth: connected")
         else:
-            self.status_label.set_text("Serial: waiting for macropad to connect…")
+            self.status_label.set_text("Waiting for macropad (USB or Bluetooth)…")
 
     def _on_state_event(self, event: str, **data) -> None:
         if event == "serial-log":
@@ -143,3 +160,5 @@ class ConsolePage(Gtk.Box):
             if data.get("connected"):
                 self._append_line(
                     f"[HARDWARE] Connected at {data.get('port') or '?'}", "system")
+        elif event == "ble-status-changed":
+            self._sync_status()
