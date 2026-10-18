@@ -86,6 +86,27 @@
 
 ---
 
+### Task 2b (fixup): Trigger slots hold action **lists** (parity correction)
+
+Discovered during Task 2 review: Python trigger slots (`single`/`double`/`hold`) hold a **list of actions** (`config.actions_list`, `state.add_action/remove_action/move_action` operate on lists; legacy dict still accepted). Task 1's `Button` model stores one `Action` per trigger and Task 2's merge keeps only the first action of a list — both drop multi-action sequences (feature loss, anti-goal). Fix before Task 4 builds on the model.
+
+**Files:**
+- Modify: `app-tauri/src-tauri/crates/core/src/config/model.rs`
+- Modify: `app-tauri/src-tauri/crates/core/src/config/mod.rs` (merge + normalize paths)
+- Modify/extend: `crates/core/tests/config_model.rs`, `crates/core/tests/config_store.rs`
+
+**Interfaces:**
+- Produces: `config::model::TriggerActions` — `#[serde(untagged)] enum { One(Action), Many(Vec<Action>) }` with helper `as_slice(&self) -> &[Action]` and `from_list(Vec<Action>) -> Self`; `Button.single/double/hold: TriggerActions`. Deserialization accepts legacy dict or list; serialization preserves the original shape (dict stays dict — exact round-trip parity with Python, which writes back whatever shape it loaded).
+- `actions_list` semantics move onto `TriggerActions::as_slice` (list filters non-dicts at deserialize; dict-without-type handled by existing merge rules).
+
+- [ ] **Step 1: Failing tests.** Round-trip: button with `single` as legacy dict → load → save → JSON still has dict; `single` as 2-action list → both actions preserved through load; store merge keeps **all** actions of a stored list (not just the first); `default_config()` round-trip unchanged (dict-shaped defaults stay dicts).
+- [ ] **Step 2: Verify FAIL.** `cargo test -p octopad-core --test config_model --test config_store`.
+- [ ] **Step 3: Implement** per Interfaces; fix Task 2 merge to use `as_slice`/shape-preserving logic.
+- [ ] **Step 4: Verify PASS.** Full suite `cargo test -p octopad-core --features serial,ble` green.
+- [ ] **Step 5: Commit.** `fix(tauri-m1): store action lists per trigger slot (parity with python actions_list)`.
+
+---
+
 ### Task 3: Legacy config importer (re-runnable)
 
 **Files:**
