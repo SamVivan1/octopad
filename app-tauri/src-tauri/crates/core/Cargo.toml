@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 serial = ["serialport"]
-ble = ["btleplug"]
+ble = ["btleplug", "tokio"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -14,3 +14,4 @@ tracing = "0.1"
 dirs = "6"
 serialport = { version = "4", optional = true }
 btleplug = { version = "0.11", optional = true }
+tokio = { version = "1", features = ["rt", "time", "macros"], optional = true }
