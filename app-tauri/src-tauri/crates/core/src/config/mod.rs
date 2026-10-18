@@ -3,12 +3,16 @@
 //! Direct port of `linux-app/config.py` — that file is the single source of
 //! truth for the on-disk schema and its semantics.
 
+pub mod import;
 pub mod model;
 pub mod store;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+pub use import::{
+    auto_import_legacy, import_legacy, import_legacy_first_run, ImportError, ImportReport,
+};
 pub use model::{Action, Button, Config, Mode, TriggerActions};
 pub use store::{preset_slug, ConfigStore};
 

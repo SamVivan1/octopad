@@ -218,6 +218,19 @@ fn merge_stored(mut config: Config, stored: &Map<String, Value>) -> Config {
     config
 }
 
+/// Build a complete typed config from an already-parsed JSON value using the
+/// same lenient per-key merge as [`ConfigStore::load_config`] (Python
+/// `load_config()` parity). A non-object top level yields pure defaults.
+///
+/// The legacy importer reuses this so imported configs go through exactly the
+/// same merge/migration path as anything loaded from the new app's own store.
+pub(crate) fn config_from_value(stored: &Value) -> Config {
+    match stored.as_object() {
+        Some(object) => merge_stored(default_config(), object),
+        None => default_config(),
+    }
+}
+
 fn warn_bad_type(key: &str) {
     tracing::warn!("[CONFIG] Stored '{key}' has the wrong type — keeping default");
 }
