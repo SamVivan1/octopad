@@ -43,8 +43,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Run core tests
-        run: cargo test -p octopad-core --manifest-path src-tauri/Cargo.toml
+      - name: Run core tests (with device features)
+        run: cargo test -p octopad-core --manifest-path src-tauri/Cargo.toml --features serial,ble
+
+      - name: Check core crate (with device features)
+        run: cargo check -p octopad-core --manifest-path src-tauri/Cargo.toml --features serial,ble
 
       - name: cargo check (workspace)
         run: cargo check --manifest-path src-tauri/Cargo.toml
