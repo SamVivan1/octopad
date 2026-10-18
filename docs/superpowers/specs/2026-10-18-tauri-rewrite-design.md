@@ -123,7 +123,10 @@ Builder's calls (adjustable if a better option appears during implementation):
 - Testing: Rust unit tests for parsers/config/state, smoke integration with
   a fake serial source, thin UI. Parity acceptance is a feature checklist
   derived from both existing Python apps (320 unique functions/methods in
-  `linux-app`, 269 in `windows-app`, from the codebase-memory graph).
+  `linux-app`, 269 in `windows-app`, from the codebase-memory graph) —
+  see `docs/superpowers/specs/2026-10-18-parity-checklist.md`, whose §7b
+  holds the resolved cross-app decisions (labels, timing ranges, validation,
+  single instance, theme, import flow).
 - Memory measurement method: total RSS of all processes belonging to the
   app, idle, immediately after fresh boot; same method used for the legacy
   baselines in M0.

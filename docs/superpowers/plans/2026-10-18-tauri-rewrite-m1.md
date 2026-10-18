@@ -108,6 +108,26 @@ Discovered during Task 2 review: Python trigger slots (`single`/`double`/`hold`)
 
 ---
 
+### Task 2c (fixup): Load-time validation — timing clamp + active-mode reset
+
+From the resolved parity decisions 3 and 6 (`docs/superpowers/specs/2026-10-18-parity-checklist.md` §7b): one validation path for both OSes. Out-of-range timing values loaded from a file are clamped (debounce 0–1000, clickTimeout 50–2000, holdTimeout 50–3000) and an out-of-range `activeModeIndex` resets to 0 — both with a warning that the M2 console page will show.
+
+**Files:**
+- Modify: `app-tauri/src-tauri/crates/core/src/config/store.rs`
+- Test: `app-tauri/src-tauri/crates/core/tests/config_store.rs` (extend)
+
+**Interfaces:**
+- `ConfigStore::load_config_with_warnings() -> (Config, Vec<String>)`; `load_config()` stays as-is and returns the first element (existing callers/tests unchanged).
+- Clamp rules: `protocol.test` — non-numeric timing values are left untouched (so `timing_command` still returns `None`, Python parity); numeric values out of range are clamped to the range with a warning; `activeModeIndex` outside `0..modes.len()` resets to 0 with a warning.
+
+- [ ] **Step 1: Failing tests.** `load_config_with_warnings` on a file with `debounceMs: 9999` → clamped to 1000 + warning; `clickTimeoutMs: 1` → 50 + warning; `holdTimeoutMs: 1` → 50; `activeModeIndex: 5` → 0 + warning; in-range values → no warnings; `"not-a-number"` → unchanged value, no clamp, and `timing_command` still `None`.
+- [ ] **Step 2: Verify FAIL.** `cargo test -p octopad-core --test config_store`.
+- [ ] **Step 3: Implement.** Keep `load_config()` behavior for callers; route both through the warnings variant.
+- [ ] **Step 4: Verify PASS.** Full suite `cargo test -p octopad-core --features serial,ble`.
+- [ ] **Step 5: Commit.** `feat(tauri-m1): clamp timings and reset out-of-range active mode on load with warnings`.
+
+---
+
 ### Task 3: Legacy config importer (re-runnable)
 
 **Files:**
