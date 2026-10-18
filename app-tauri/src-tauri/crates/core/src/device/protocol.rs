@@ -14,11 +14,19 @@
 //!   `linux-app/serial_listener.py::parse_event_line`: mode `desktop|ha`,
 //!   **0-based** button index, trigger `single|double|hold`, case-insensitive;
 //! - [`candidate_ports`] — the port shapes the apps scan
-//!   (`/dev/ttyUSB*`, `/dev/ttyACM*` on Linux, `COM*` on Windows).
+//!   (`/dev/ttyUSB*`, `/dev/ttyACM*` on Linux, `COM*` on Windows);
+//! - [`split_events`] — the BLE stream splitter, an exact port of
+//!   `_split_events`/`_LINE_PATTERN` in both Python BLE bridges (one
+//!   notification may carry several event lines, or only part of one);
+//! - the BLE classification helpers ([`classify_device`], [`BleError`],
+//!   [`is_tx_characteristic`], …) moved out of the M0 `ble_spike`, which is now
+//!   a thin re-export shim (like `serial_spike`).
 //!
 //! The serial-specific I/O helpers are compiled only with the `serial`
-//! feature; everything else (HELLO/event parsing, candidate filtering) is pure
-//! and always available so the BLE transport can reuse it.
+//! feature, and the `btleplug` I/O lives in `device::ble_transport` behind the
+//! `ble` feature; everything else (HELLO/event parsing, candidate filtering,
+//! stream reassembly, BLE classification) is pure and always available so both
+//! transports reuse it and the tests need no hardware.
 
 use std::fmt;
 
@@ -263,6 +271,128 @@ fn skip_whitespace(text: &str) -> Option<&str> {
 }
 
 // ---------------------------------------------------------------------------
+// BLE stream reassembly (`split_events` == Python `_split_events`)
+// ---------------------------------------------------------------------------
+
+/// Extract every complete event line from a BLE notification stream — an exact
+/// port of `_split_events`/`_LINE_PATTERN` from both Python BLE bridges.
+///
+/// The pattern (case-insensitive, alternatives tried in this order so a line is
+/// attributed to the first shape it matches):
+///
+/// ```python
+/// _LINE_PATTERN = re.compile(
+///     r"\[(?:DESKTOP|HA)\]\s+Button\s+\d+\s+->\s+(?:SINGLE|DOUBLE|HOLD)[^\n\[]*"
+///     r"|MODE:\s*(?:HOME ASSISTANT|DESKTOP)"
+///     r"|HELLO:[^\n\[]*",
+///     re.IGNORECASE)
+///
+/// def _split_events(text):
+///     events, last_end = [], 0
+///     for match in _LINE_PATTERN.finditer(text):
+///         events.append(match.group(0).strip())
+///         last_end = match.end()
+///     if not events:
+///         return [], text
+///     return events, text[last_end:]
+/// ```
+///
+/// The pad emits no line delimiter over BLE and a notification may carry several
+/// lines or only a fragment of one, so `buffer` accumulates what earlier
+/// notifications delivered. Every complete match is returned trimmed, in stream
+/// order; the un-matched tail is left in `buffer` for the next notification
+/// (Python keeps `text[last_end:]`). When nothing matches, `buffer` is left
+/// untouched.
+pub fn split_events(buffer: &mut String) -> Vec<String> {
+    let matches = scan_events(buffer);
+    let Some(last_end) = matches.last().map(|&(_, end)| end) else {
+        return Vec::new();
+    };
+    let events = matches
+        .into_iter()
+        .map(|(start, end)| buffer[start..end].trim().to_string())
+        .collect();
+    buffer.drain(..last_end); // keep the partial tail for the next chunk
+    events
+}
+
+/// Every `_LINE_PATTERN` match in `text`, as `(start, end)` byte ranges in
+/// stream order (Python `finditer`).
+fn scan_events(text: &str) -> Vec<(usize, usize)> {
+    // ASCII-only lowercasing keeps byte offsets aligned with `text`, so every
+    // match offset is valid for the original string too.
+    let lower = text.to_ascii_lowercase();
+    let mut matches = Vec::new();
+    let mut at = 0;
+    while at < lower.len() {
+        match match_line_pattern(&lower, at) {
+            Some(end) => {
+                matches.push((at, end));
+                at = end.max(at + 1); // `finditer`: continue after the match
+            }
+            // No match starts here; step one whole character forward.
+            None => at += lower[at..].chars().next().map_or(1, char::len_utf8),
+        }
+    }
+    matches
+}
+
+/// Try the three `_LINE_PATTERN` alternatives at byte offset `at` of the
+/// lowercased text; returns the end offset of the first that matches.
+fn match_line_pattern(lower: &str, at: usize) -> Option<usize> {
+    match_event_line(lower, at)
+        .or_else(|| match_mode_line(lower, at))
+        .or_else(|| match_hello_line(lower, at))
+}
+
+/// `\[(?:DESKTOP|HA)\]\s+Button\s+\d+\s+->\s+(?:SINGLE|DOUBLE|HOLD)[^\n\[]*`
+fn match_event_line(lower: &str, at: usize) -> Option<usize> {
+    let rest = lower.get(at..)?.strip_prefix('[')?;
+    let rest = rest
+        .strip_prefix("desktop]")
+        .or_else(|| rest.strip_prefix("ha]"))?;
+    let rest = skip_whitespace(rest)?; // `\s+` after `]`
+    let rest = rest.strip_prefix("button")?;
+    let rest = skip_whitespace(rest)?; // `\s+` after `Button`
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None; // `\d+`
+    }
+    let rest = skip_whitespace(&rest[digits..])?; // `\s+` before `->`
+    let rest = rest.strip_prefix("->")?;
+    let rest = skip_whitespace(rest)?; // `\s+` after `->`
+    let rest = rest
+        .strip_prefix("single")
+        .or_else(|| rest.strip_prefix("double"))
+        .or_else(|| rest.strip_prefix("hold"))?;
+    Some(lower.len() - skip_body(rest).len()) // `[^\n\[]*`
+}
+
+/// `MODE:\s*(?:HOME ASSISTANT|DESKTOP)`
+fn match_mode_line(lower: &str, at: usize) -> Option<usize> {
+    let rest = lower.get(at..)?.strip_prefix("mode:")?;
+    // `\s*` then a literal starting with a non-space: greedy whitespace is
+    // equivalent (backtracking could never help).
+    let rest = rest.trim_start();
+    let rest = rest
+        .strip_prefix("home assistant")
+        .or_else(|| rest.strip_prefix("desktop"))?;
+    Some(lower.len() - rest.len())
+}
+
+/// `HELLO:[^\n\[]*` — matches even with an empty body.
+fn match_hello_line(lower: &str, at: usize) -> Option<usize> {
+    let rest = lower.get(at..)?.strip_prefix("hello:")?;
+    Some(lower.len() - skip_body(rest).len())
+}
+
+/// Python `[^\n\[]*`: everything up to (but not including) a newline or `[`.
+fn skip_body(text: &str) -> &str {
+    let end = text.find(['\n', '[']).unwrap_or(text.len());
+    &text[end..]
+}
+
+// ---------------------------------------------------------------------------
 // Candidate port filtering
 // ---------------------------------------------------------------------------
 
@@ -295,6 +425,126 @@ pub fn candidate_ports(ports: Vec<String>) -> Vec<String> {
 pub fn is_com_port(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     upper.len() > 3 && upper.starts_with("COM") && upper[3..].bytes().all(|b| b.is_ascii_digit())
+}
+
+// ---------------------------------------------------------------------------
+// BLE device classification (pure; moved from the M0 `ble_spike`)
+// ---------------------------------------------------------------------------
+
+/// One device as seen during a scan, reduced to what classification needs.
+#[derive(Debug, Clone)]
+pub struct AdvertisedDevice {
+    /// Advertised local name, if any.
+    pub name: Option<String>,
+    /// Address in string form (platform display form, e.g. `aa:bb:cc:dd:ee:ff`).
+    pub address: String,
+    /// Advertised service UUIDs, as strings (case as delivered by the OS).
+    pub service_uuids: Vec<String>,
+}
+
+/// An OctoPad candidate produced by discovery/classification.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Discovered {
+    /// Advertised name (may be empty when the pad was matched by UUID only;
+    /// the user-configured name is learned later from the HELLO line).
+    pub name: String,
+    /// Device address in string form.
+    pub address: String,
+    /// `true` when accepted via advertised service UUID (strong signal),
+    /// `false` when accepted via the default-name fallback only.
+    pub matched_by_uuid: bool,
+}
+
+/// Structured BLE errors — the transports never panic on hardware failures and
+/// callers can distinguish "busy" (device/adapter owned by another client, e.g.
+/// the running Python bridge — Review Focus Input 1) and a missing adapter from
+/// other failures without string matching.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum BleError {
+    /// No Bluetooth adapter was found.
+    NoAdapter,
+    /// The device or GATT slot is in use by another client.
+    Busy(String),
+    /// Anything else (scan/connect/read/write failed).
+    Other(String),
+}
+
+impl fmt::Display for BleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BleError::NoAdapter => write!(f, "no Bluetooth adapter available"),
+            BleError::Busy(msg) => write!(f, "Bluetooth device busy: {msg}"),
+            BleError::Other(msg) => write!(f, "Bluetooth error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for BleError {}
+
+/// True when `name` equals [`DEFAULT_DEVICE_NAME`], trimmed and
+/// case-insensitively (mirrors Python:
+/// `(Name or Alias or "").strip().casefold() == DEFAULT_DEVICE_NAME.casefold()`).
+pub fn is_default_device_name(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case(DEFAULT_DEVICE_NAME)
+}
+
+/// Classify one advertised device: service-UUID match first
+/// (`matched_by_uuid = true`), default-name fallback only when no advertised
+/// UUID matched (Review Focus Input 5: the pad is accepted by service UUID even
+/// when the user renamed it). Returns `None` for anything that is not an
+/// OctoPad.
+pub fn classify_device(adv: &AdvertisedDevice) -> Option<Discovered> {
+    let matched_by_uuid = adv
+        .service_uuids
+        .iter()
+        .any(|uuid| crate::proto::is_our_service(uuid));
+    let name = adv.name.as_deref().unwrap_or("").trim();
+    if !matched_by_uuid && !is_default_device_name(name) {
+        return None;
+    }
+    Some(Discovered {
+        name: name.to_string(),
+        address: adv.address.clone(),
+        matched_by_uuid,
+    })
+}
+
+/// Classify a whole scan window, preserving scan order.
+pub fn classify_all(devices: &[AdvertisedDevice]) -> Vec<Discovered> {
+    devices.iter().filter_map(classify_device).collect()
+}
+
+/// True for the device → host TX characteristic of current or legacy firmware
+/// (mirrors Python: `char in (TX_UUID, LEGACY_TX_UUID)`). Legacy follows the
+/// Linux/standard NUS mapping (`…0003` notify), not the Windows bug.
+pub fn is_tx_characteristic(uuid: &str) -> bool {
+    let uuid = uuid.to_ascii_lowercase();
+    uuid == crate::proto::TX_UUID || uuid == crate::proto::LEGACY_TX_UUID
+}
+
+/// True for the host → device RX characteristic (current firmware only; legacy
+/// NUS uses `6e400002…`, mirroring the Linux bridge).
+pub fn is_rx_characteristic(uuid: &str) -> bool {
+    let uuid = uuid.to_ascii_lowercase();
+    uuid == crate::proto::RX_UUID || uuid == crate::proto::LEGACY_RX_UUID
+}
+
+/// Map an operation failure to a structured [`BleError`], flagging "device
+/// busy" (adapter/GATT in use — e.g. the Python bridge already owns the pad).
+pub fn classify_ble_failure(op: &str, message: &str) -> BleError {
+    let reason = format!("{op}: {message}");
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("busy")
+        || lower.contains("in use")
+        || lower.contains("in-use")
+        || lower.contains("sharing violation")
+        || lower.contains("being used by another")
+        || lower.contains("exclusive lock")
+    {
+        BleError::Busy(reason)
+    } else {
+        BleError::Other(reason)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -534,6 +784,65 @@ mod tests {
             .is_empty());
         assert!(!SerialError::NotFound("x".into()).to_string().is_empty());
         assert!(!SerialError::Other("x".into()).to_string().is_empty());
+    }
+
+    #[test]
+    fn split_events_reassembles_fragments_and_keeps_the_partial_tail() {
+        let mut buffer = String::from("HEL");
+        assert!(split_events(&mut buffer).is_empty());
+        assert_eq!(buffer, "HEL"); // partial token stays buffered
+
+        buffer.push_str("LO:OCTOPAD:Pad:v1\n[HA] Button 1 ->");
+        assert_eq!(split_events(&mut buffer), vec!["HELLO:OCTOPAD:Pad:v1"]);
+        assert_eq!(buffer, "\n[HA] Button 1 ->"); // the rest keeps accumulating
+
+        buffer.push_str(" HOLD\n");
+        assert_eq!(split_events(&mut buffer), vec!["[HA] Button 1 -> HOLD"]);
+        assert_eq!(buffer, "\n");
+    }
+
+    #[test]
+    fn tx_characteristic_recognized_for_current_and_legacy_firmware_only() {
+        assert!(is_tx_characteristic(crate::proto::TX_UUID));
+        assert!(is_tx_characteristic(crate::proto::LEGACY_TX_UUID));
+        assert!(is_tx_characteristic("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"));
+        // A characteristic is never a service, and TX/RX are distinct.
+        assert!(!is_tx_characteristic(crate::proto::SERVICE_UUID));
+        assert!(!is_tx_characteristic(crate::proto::RX_UUID));
+        assert!(!is_tx_characteristic(
+            "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+        ));
+    }
+
+    #[test]
+    fn rx_characteristic_follows_the_linux_legacy_mapping() {
+        assert!(is_rx_characteristic(crate::proto::RX_UUID));
+        assert!(is_rx_characteristic(crate::proto::LEGACY_RX_UUID));
+        assert!(!is_rx_characteristic(crate::proto::TX_UUID));
+        assert!(!is_rx_characteristic(crate::proto::LEGACY_TX_UUID));
+    }
+
+    #[test]
+    fn busy_failures_are_classified_structurally() {
+        assert!(matches!(
+            classify_ble_failure("connect", "GATT server is busy"),
+            BleError::Busy(_)
+        ));
+        assert!(matches!(
+            classify_ble_failure("connect", "device already in use"),
+            BleError::Busy(_)
+        ));
+        assert!(matches!(
+            classify_ble_failure("connect", "no route to device"),
+            BleError::Other(_)
+        ));
+    }
+
+    #[test]
+    fn ble_errors_display_without_panicking() {
+        assert!(!BleError::NoAdapter.to_string().is_empty());
+        assert!(!BleError::Busy("x".into()).to_string().is_empty());
+        assert!(!BleError::Other("x".into()).to_string().is_empty());
     }
 
     #[cfg(feature = "serial")]

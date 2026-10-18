@@ -6,16 +6,26 @@
 //! via a `tokio::sync::watch` channel (Global Constraint: no extra crate).
 //!
 //! - [`protocol`] — pure protocol helpers (HELLO/event parsing, candidate-port
-//!   filtering) plus the `serial`-gated port I/O helpers moved from the M0
-//!   `serial_spike` spike.
+//!   filtering, BLE stream reassembly and device classification) plus the
+//!   `serial`-gated port I/O helpers moved from the M0 `serial_spike` spike.
 //! - [`serial_transport`] — USB serial with the Python reconnect loop
 //!   (`serial_listener.py::_run_loop`): scan, probe, push timings, read lines,
 //!   rescan 2s when no port/open failed and 1s after a mid-session read error.
+//! - [`backoff`] — the shared exponential reconnect ladder (3s → ×2 capped
+//!   15s, reset on connect).
+//! - [`ble_transport`] — Bluetooth LE with the Python reconnect loop
+//!   (`ble_bridge.py::_main`): scan by service UUID (name fallback), read TX
+//!   once for the HELLO identity, reassemble notifications, write commands to
+//!   RX and reconnect with the backoff above.
 
+pub mod backoff;
 pub mod protocol;
 
 #[cfg(feature = "serial")]
 pub mod serial_transport;
+
+#[cfg(feature = "ble")]
+pub mod ble_transport;
 
 /// Which transport an event/status came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
