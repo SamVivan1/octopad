@@ -11,6 +11,8 @@ export interface Action {
   [field: string]: JsonValue;
 }
 
+export type TriggerName = 'single' | 'double' | 'hold';
+
 export type ActionSlot = Action | Action[] | JsonValue;
 
 export interface Button {
