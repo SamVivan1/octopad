@@ -4,11 +4,13 @@
 //! truth for the on-disk schema and its semantics.
 
 pub mod model;
+pub mod store;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub use model::{Action, Button, Config, Mode};
+pub use store::{preset_slug, ConfigStore};
 
 /// Schema version of the stored configuration (independent of the product
 /// version). Bump it whenever the on-disk shape changes and add the matching
