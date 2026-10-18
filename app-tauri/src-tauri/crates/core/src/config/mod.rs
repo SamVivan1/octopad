@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub use import::{
-    auto_import_legacy, import_legacy, import_legacy_first_run, ImportError, ImportReport,
+    auto_import_legacy, import_legacy, import_legacy_first_run, load_legacy_config, ImportError,
+    ImportReport,
 };
 pub use model::{Action, Button, Config, Mode, TriggerActions};
 pub use store::{preset_slug, ConfigStore};
