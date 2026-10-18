@@ -138,11 +138,9 @@ fn load_wrong_typed_top_level_keys_keep_their_default_not_full_defaults() {
     assert_eq!(cfg.version, 2.6); // untouched default survives
                                   // Stored edits are NOT discarded wholesale (NOT full defaults):
     assert_eq!(cfg.modes[0].buttons[0].label, "Custom");
-    assert_eq!(cfg.modes[0].buttons[0].single.action_type, "text");
-    assert_eq!(
-        cfg.modes[0].buttons[0].single.extra.get("text"),
-        Some(&json!("Hi"))
-    );
+    let single = &cfg.modes[0].buttons[0].single.as_slice()[0];
+    assert_eq!(single.action_type, "text");
+    assert_eq!(single.extra.get("text"), Some(&json!("Hi")));
 }
 
 #[test]
@@ -192,8 +190,11 @@ fn short_button_list_fills_remaining_from_default_template() {
     assert_eq!(buttons[1].label, "Two");
     // Remaining slots come from the default desktop template:
     assert_eq!(buttons[2].label, "Screenshot");
-    assert_eq!(buttons[2].single.action_type, "system_action");
-    assert_eq!(buttons[7].single.extra.get("key"), Some(&json!("8")));
+    assert_eq!(buttons[2].single.as_slice()[0].action_type, "system_action");
+    assert_eq!(
+        buttons[7].single.as_slice()[0].extra.get("key"),
+        Some(&json!("8"))
+    );
     // Second stored mode with an empty list → all default template buttons.
     assert_eq!(cfg.modes[1].buttons.len(), 8);
     assert_eq!(cfg.modes[1].buttons[0].label, "Mode / Passcode");
@@ -221,13 +222,85 @@ fn load_accepts_legacy_dict_and_list_wrapped_actions() {
     );
     let cfg = store.load_config();
     let button = &cfg.modes[0].buttons[0];
-    assert_eq!(button.single.action_type, "text");
-    assert_eq!(button.single.extra.get("text"), Some(&json!("Hi")));
-    assert_eq!(button.double.action_type, "media");
-    assert_eq!(button.double.extra.get("mediaKey"), Some(&json!("MUTE")));
+    let single = &button.single.as_slice()[0];
+    assert_eq!(single.action_type, "text");
+    assert_eq!(single.extra.get("text"), Some(&json!("Hi")));
+    let double = button.double.as_slice();
+    assert_eq!(double.len(), 1);
+    assert_eq!(double[0].action_type, "media");
+    assert_eq!(double[0].extra.get("mediaKey"), Some(&json!("MUTE")));
     // Empty list collapses to none — NOT the template's passcode-text hold.
-    assert_eq!(button.hold.action_type, "none");
-    assert!(button.hold.extra.is_empty());
+    assert_eq!(button.hold.as_slice()[0].action_type, "none");
+    assert!(button.hold.as_slice()[0].extra.is_empty());
+}
+
+#[test]
+fn load_keeps_every_action_of_a_stored_list() {
+    // Task 2b parity fix: a trigger slot holding a multi-action sequence
+    // survives the merge with ALL of its actions, not just the first.
+    let dir = tempdir().unwrap();
+    let store = store_in(&dir);
+    write_stored(
+        &store,
+        &json!({
+            "modes": [
+                {"buttons": [{
+                    "index": 0, "pin": 20, "label": "Seq",
+                    "single": [
+                        {"type": "text", "text": "one"},
+                        {"type": "delay", "seconds": 0.5},
+                        {"type": "media", "mediaKey": "PLAY_PAUSE"}
+                    ]
+                }]},
+                {"buttons": []}
+            ]
+        }),
+    );
+    let cfg = store.load_config();
+    let actions = cfg.modes[0].buttons[0].single.as_slice();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0].action_type, "text");
+    assert_eq!(actions[1].action_type, "delay");
+    assert_eq!(actions[1].extra.get("seconds"), Some(&json!(0.5)));
+    assert_eq!(actions[2].action_type, "media");
+}
+
+#[test]
+fn stored_list_shape_survives_load_save_round_trip() {
+    // Python parity: a list-shaped slot is written back as a list, a legacy
+    // dict-shaped slot as a dict (write back whatever shape was loaded).
+    let dir = tempdir().unwrap();
+    let store = store_in(&dir);
+    write_stored(
+        &store,
+        &json!({
+            "modes": [
+                {"buttons": [{
+                    "index": 0, "pin": 20, "label": "X",
+                    "single": {"type": "text", "text": "dict"},  // legacy dict
+                    "double": [{"type": "text", "text": "a"},
+                               {"type": "delay", "seconds": 1}]  // sequence
+                }]},
+                {"buttons": []}
+            ]
+        }),
+    );
+    let cfg = store.load_config();
+    store.save_config(&cfg).unwrap();
+    let written: Value =
+        serde_json::from_str(&fs::read_to_string(store.config_path()).unwrap()).unwrap();
+    let button = &written["modes"][0]["buttons"][0];
+    assert!(
+        button["single"].is_object(),
+        "legacy dict slot must stay a dict"
+    );
+    assert_eq!(button["single"]["type"], json!("text"));
+    assert!(button["double"].is_array(), "list slot must stay a list");
+    assert_eq!(button["double"].as_array().unwrap().len(), 2);
+    assert_eq!(button["double"][0]["text"], json!("a"));
+    assert_eq!(button["double"][1]["type"], json!("delay"));
+    // And the full typed config round-trips unchanged.
+    assert_eq!(store.load_config(), cfg);
 }
 
 #[test]
@@ -248,11 +321,27 @@ fn load_keeps_template_trigger_when_stored_dict_lacks_type() {
     );
     let cfg = store.load_config();
     let button = &cfg.modes[0].buttons[1];
-    assert_eq!(button.single.action_type, "system_action");
-    assert_eq!(
-        button.single.extra.get("presetId"),
-        Some(&json!("open_terminal"))
-    );
+    let single = &button.single.as_slice()[0];
+    assert_eq!(single.action_type, "system_action");
+    assert_eq!(single.extra.get("presetId"), Some(&json!("open_terminal")));
+}
+
+#[test]
+fn load_then_save_default_config_is_byte_identical() {
+    // Task 2b: dict-shaped default triggers survive the store merge without
+    // being converted to lists (round-trip parity with Python write-back).
+    let dir = tempdir().unwrap();
+    let store = store_in(&dir);
+    write_stored(&store, &serde_json::to_value(default_config()).unwrap());
+    let cfg = store.load_config();
+    assert_eq!(cfg, default_config());
+    store.save_config(&cfg).unwrap();
+    let written: Value =
+        serde_json::from_str(&fs::read_to_string(store.config_path()).unwrap()).unwrap();
+    let button = &written["modes"][0]["buttons"][0];
+    assert!(button["single"].is_object());
+    assert!(button["double"].is_object());
+    assert!(button["hold"].is_object());
 }
 
 #[test]

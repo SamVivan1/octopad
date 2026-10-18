@@ -2,8 +2,9 @@
 //! ports of linux-app/config.py pinned to Python semantics.
 
 use octopad_core::config::{
-    actions_list, default_action, default_config, migrate_config, normalize_config, timing_command,
-    Action, Config, CURRENT_SCHEMA_VERSION, DEFAULT_TIMINGS, PINOUT,
+    actions_list, default_action, default_config, migrate_config, model::TriggerActions,
+    normalize_config, timing_command, Action, Config, CURRENT_SCHEMA_VERSION, DEFAULT_TIMINGS,
+    PINOUT,
 };
 use serde_json::json;
 
@@ -56,11 +57,13 @@ fn desktop_button_0_single_is_mode_toggle_with_passcode_hold() {
     let cfg = default_config();
     let button = &cfg.modes[0].buttons[0];
     assert_eq!(button.label, "Mode / Passcode");
-    assert_eq!(button.single.action_type, "mode_toggle");
-    assert!(button.single.extra.is_empty());
-    assert_eq!(button.double.action_type, "none");
-    assert_eq!(button.hold.action_type, "text");
-    assert_eq!(button.hold.extra.get("text"), Some(&json!("031004")));
+    let single = &button.single.as_slice()[0];
+    assert_eq!(single.action_type, "mode_toggle");
+    assert!(single.extra.is_empty());
+    assert_eq!(button.double.as_slice()[0].action_type, "none");
+    let hold = &button.hold.as_slice()[0];
+    assert_eq!(hold.action_type, "text");
+    assert_eq!(hold.extra.get("text"), Some(&json!("031004")));
 }
 
 #[test]
@@ -150,6 +153,98 @@ fn actions_list_other_shapes_yield_empty() {
     assert!(actions_list(&json!(5)).is_empty());
     assert!(actions_list(&json!(true)).is_empty());
     assert!(actions_list(&json!([])).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// TriggerActions (Task 2b: trigger slots hold action lists)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trigger_actions_deserializes_dict_as_single_action() {
+    let slot: TriggerActions =
+        serde_json::from_value(json!({"type": "text", "text": "Hi"})).unwrap();
+    assert_eq!(slot.as_slice().len(), 1);
+    assert_eq!(slot.as_slice()[0].action_type, "text");
+    assert_eq!(slot.as_slice()[0].extra.get("text"), Some(&json!("Hi")));
+}
+
+#[test]
+fn trigger_actions_deserializes_list_keeping_all_actions() {
+    let slot: TriggerActions = serde_json::from_value(json!([
+        {"type": "text", "text": "a"},
+        {"type": "delay", "seconds": 1}
+    ]))
+    .unwrap();
+    let actions = slot.as_slice();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0].action_type, "text");
+    assert_eq!(actions[1].action_type, "delay");
+    assert_eq!(actions[1].extra.get("seconds"), Some(&json!(1)));
+}
+
+#[test]
+fn trigger_actions_deserialize_preserves_original_shape() {
+    // Python round-trip parity: whatever shape the file had is the shape
+    // written back (legacy dict stays a dict).
+    let dict_slot: TriggerActions = serde_json::from_value(json!({"type": "media"})).unwrap();
+    assert!(serde_json::to_value(&dict_slot).unwrap().is_object());
+
+    let list_slot: TriggerActions =
+        serde_json::from_value(json!([{"type": "media"}, {"type": "delay"}])).unwrap();
+    assert!(serde_json::to_value(&list_slot).unwrap().is_array());
+
+    // A non-dict/non-list slot passes through untouched (merge rules decide).
+    let scalar_slot: TriggerActions = serde_json::from_value(json!(5)).unwrap();
+    assert_eq!(serde_json::to_value(&scalar_slot).unwrap(), json!(5));
+}
+
+#[test]
+fn trigger_actions_from_list_wraps_one_and_keeps_many() {
+    let one = TriggerActions::from_list(vec![default_action("text")]);
+    assert!(matches!(one, TriggerActions::One(_)));
+    assert_eq!(one.as_slice().len(), 1);
+
+    let many = TriggerActions::from_list(vec![
+        default_action("text"),
+        default_action("media"),
+        default_action("delay"),
+    ]);
+    assert!(matches!(many, TriggerActions::Many(_)));
+    assert_eq!(many.as_slice().len(), 3);
+}
+
+#[test]
+fn default_config_round_trip_keeps_dict_shaped_triggers() {
+    // Dict-shaped defaults stay dicts through serialize → deserialize →
+    // serialize (exact round-trip parity with Python's write-back).
+    let cfg = default_config();
+    let first = serde_json::to_value(&cfg).unwrap();
+    let back: Config = serde_json::from_value(first.clone()).unwrap();
+    let second = serde_json::to_value(&back).unwrap();
+    assert_eq!(first, second);
+    for mode in second["modes"].as_array().unwrap() {
+        for button in mode["buttons"].as_array().unwrap() {
+            for trigger in ["single", "double", "hold"] {
+                assert!(
+                    button[trigger].is_object(),
+                    "default trigger '{trigger}' must stay a dict"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn button_with_list_trigger_round_trips_all_actions() {
+    // A button edited into list shape keeps every action through the typed
+    // serde round-trip.
+    let mut cfg = default_config();
+    cfg.modes[0].buttons[3].single =
+        TriggerActions::from_list(vec![default_action("text"), default_action("delay")]);
+    let value = serde_json::to_value(&cfg).unwrap();
+    let back: Config = serde_json::from_value(value).unwrap();
+    assert_eq!(back, cfg);
+    assert_eq!(back.modes[0].buttons[3].single.as_slice().len(), 2);
 }
 
 // ---------------------------------------------------------------------------
