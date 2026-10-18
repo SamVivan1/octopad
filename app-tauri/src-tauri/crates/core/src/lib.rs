@@ -2,6 +2,9 @@ pub mod platform;
 pub mod proto;
 pub mod config_paths;
 
+#[cfg(feature = "serial")]
+pub use platform::list_ports;
+
 pub fn version() -> &'static str {
     "0.1.0"
 }
