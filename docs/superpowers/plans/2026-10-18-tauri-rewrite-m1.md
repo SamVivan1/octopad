@@ -12,6 +12,7 @@
 
 ## Global Constraints
 
+- **Legacy NUS UUID convention (decided):** custom service notify=`…0002`(TX)/write=`…0003`(RX); legacy NUS notify=`6e400003…`(TX)/write=`6e400002…`(RX) — the **Linux** mapping, which matches the NUS standard. `windows-app/ble_bridge.py:28,258` declares the legacy *write* UUID as its notify source and never maps a legacy RX — a bug in the Python Windows app (see parity checklist §7.16). The rewrite implements the correct Linux convention on both OSes; it does **not** replicate the Windows bug.
 - Only modify files under `app-tauri/` (plus this plan file). Python apps and firmware untouched.
 - Config semantics must match `linux-app/config.py` exactly: `CURRENT_SCHEMA_VERSION=1`, `PINOUT=[20,9,2,1,21,10,3,0]`, `DEFAULT_TIMINGS={debounceMs:25, clickTimeoutMs:250, holdTimeoutMs:450}`, 2 modes (`desktop`, `ha`), 8 buttons per mode, triggers `single|double|hold`, action types (`none, shortcut, text, media, audio_output, launch_app, system_action, bash_script, home_assistant, ha_webhook, delay, mode_toggle`), `TIMING:{d},{c},{h}` command format, preset slugs per `preset_slug()`.
 - Dirty-tracking semantics match `state.py`: non-edit keys `activeModeIndex`/`activePreset` never mark dirty; dirty emitted only on flip; `_mark_saved` deep-copies baseline.
