@@ -8,6 +8,7 @@ venv/
 
 # Node
 node_modules/
+.worktrees/
 
 # Logs & editor
 *.log
