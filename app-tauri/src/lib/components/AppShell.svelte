@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Sidebar from './Sidebar.svelte';
   import StatusHeader from './StatusHeader.svelte';
+  import ButtonsPage from '../pages/ButtonsPage.svelte';
   import ProfilesPage from '../pages/ProfilesPage.svelte';
   import { initializeAppState } from '../state';
 
@@ -47,10 +48,7 @@
       {/if}
 
       {#if activePage === 'Buttons'}
-        <section aria-labelledby="buttons-title">
-          <h1 id="buttons-title">Buttons</h1>
-          <p class="page-placeholder">Choose a key to configure its actions.</p>
-        </section>
+        <ButtonsPage />
       {:else if activePage === 'Serial Console'}
         <section aria-labelledby="console-title">
           <h1 id="console-title">Serial Console</h1>
