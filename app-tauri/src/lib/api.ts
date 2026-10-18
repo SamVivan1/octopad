@@ -79,3 +79,11 @@ export function renameDevice(name: string): Promise<boolean> {
 export function importLegacyConfig(): Promise<unknown> {
   return invoke<unknown>('import_legacy_config');
 }
+
+export function getAutostartEnabled(): Promise<boolean> {
+  return invoke<boolean>('get_autostart_enabled_cmd');
+}
+
+export function setAutostartEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>('set_autostart_enabled_cmd', { enabled });
+}
