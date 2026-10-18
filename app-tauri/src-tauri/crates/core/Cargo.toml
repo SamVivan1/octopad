@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-serial = ["serialport", "tokio"]
-ble = ["btleplug", "futures", "tokio", "uuid"]
+serial = ["serialport"]
+ble = ["btleplug", "futures", "uuid"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -16,7 +16,7 @@ serialport = { version = "4", optional = true }
 btleplug = { version = "0.11", optional = true }
 futures = { version = "0.3", optional = true }
 uuid = { version = "1", optional = true }
-tokio = { version = "1", features = ["sync", "rt", "time", "macros"], optional = true }
+tokio = { version = "1", features = ["sync", "rt", "time", "macros"] }
 
 [dev-dependencies]
 tempfile = "3"

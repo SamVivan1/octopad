@@ -19,6 +19,7 @@
 //!   RX and reconnect with the backoff above.
 
 pub mod backoff;
+pub mod manager;
 pub mod protocol;
 
 #[cfg(feature = "serial")]

@@ -13,6 +13,8 @@
 //! hardware and no wall-clock delays.
 
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serialport::SerialPort;
@@ -81,6 +83,35 @@ pub struct SerialTransport {
     opener: PortOpener,
     sleeper: Box<dyn Sleeper>,
     timing_command: Option<String>,
+    commands_tx: mpsc::UnboundedSender<Command>,
+    commands_rx: Option<mpsc::UnboundedReceiver<Command>>,
+    connected: Arc<AtomicBool>,
+}
+
+struct Command {
+    line: String,
+    log: bool,
+}
+
+/// Thread-safe command handle for the live serial transport.
+#[derive(Clone)]
+pub struct SerialCommandHandle {
+    connected: Arc<AtomicBool>,
+    commands: mpsc::UnboundedSender<Command>,
+}
+
+impl SerialCommandHandle {
+    /// Queue a command for the connected serial session.
+    pub fn send_command(&self, command: &str) -> bool {
+        self.connected.load(Ordering::SeqCst)
+            && self
+                .commands
+                .send(Command {
+                    line: command.trim().to_string(),
+                    log: false,
+                })
+                .is_ok()
+    }
 }
 
 impl Default for SerialTransport {
@@ -93,12 +124,24 @@ impl SerialTransport {
     /// Production transport: system port enumeration, the M0 HELLO probe, a
     /// real serial opener, real sleeps, and the default `TIMING:` command.
     pub fn new() -> Self {
+        let (commands_tx, commands_rx) = mpsc::unbounded_channel();
         Self {
             lister: Box::new(|| protocol::list_candidate_ports().unwrap_or_default()),
             prober: Box::new(|port: &str| protocol::probe_hello(port, PROBE_TIMEOUT_MS)),
             opener: Box::new(open_port),
             sleeper: Box::new(ThreadSleeper),
             timing_command: crate::config::timing_command(&crate::config::default_config()),
+            commands_tx,
+            commands_rx: Some(commands_rx),
+            connected: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// A handle for queuing commands and checking connection state.
+    pub fn command_handle(&self) -> SerialCommandHandle {
+        SerialCommandHandle {
+            connected: self.connected.clone(),
+            commands: self.commands_tx.clone(),
         }
     }
 
@@ -143,15 +186,28 @@ impl SerialTransport {
     /// `shutdown` flips to `true` (checked between candidates, between reads
     /// and before every retry sleep).
     pub fn spawn(
-        self,
+        mut self,
         tx: mpsc::Sender<DeviceEvent>,
         shutdown: watch::Receiver<bool>,
     ) -> JoinHandle<()> {
-        tokio::task::spawn_blocking(move || self.run(tx, shutdown))
+        let commands = self
+            .commands_rx
+            .take()
+            .expect("a SerialTransport can only be spawned once");
+        let connected = self.connected.clone();
+        tokio::task::spawn_blocking(move || {
+            self.run(tx, shutdown, commands);
+            connected.store(false, Ordering::SeqCst);
+        })
     }
 
     /// The blocking reconnect loop (port of `_run_loop`).
-    fn run(&self, tx: mpsc::Sender<DeviceEvent>, shutdown: watch::Receiver<bool>) {
+    fn run(
+        &self,
+        tx: mpsc::Sender<DeviceEvent>,
+        shutdown: watch::Receiver<bool>,
+        mut commands: mpsc::UnboundedReceiver<Command>,
+    ) {
         let mut last_port: Option<String> = None;
         let mut device_name: Option<String> = None;
 
@@ -179,6 +235,7 @@ impl SerialTransport {
             };
 
             last_port = Some(port.clone());
+            self.connected.store(true, Ordering::SeqCst);
             send(
                 &tx,
                 DeviceEvent::StatusChanged {
@@ -200,7 +257,18 @@ impl SerialTransport {
             loop {
                 if *shutdown.borrow() {
                     connection.close();
+                    self.connected.store(false, Ordering::SeqCst);
                     return;
+                }
+                while let Ok(command) = commands.try_recv() {
+                    if connection.write_line(&command.line).is_ok() && command.log {
+                        send(
+                            &tx,
+                            DeviceEvent::Log {
+                                line: format!("[TX] {}", command.line),
+                            },
+                        );
+                    }
                 }
                 match connection.read_line() {
                     Ok(Some(line)) => {
@@ -214,6 +282,7 @@ impl SerialTransport {
                     Err(err) => {
                         tracing::debug!(port, error = %err, "serial read failed; reconnecting");
                         connection.close();
+                        self.connected.store(false, Ordering::SeqCst);
                         send(
                             &tx,
                             DeviceEvent::StatusChanged {
