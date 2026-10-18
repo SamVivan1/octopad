@@ -560,32 +560,54 @@ impl AppState {
     }
 
     /// Switch the active mode (no event when unchanged; not an edit).
-    pub fn set_mode(&self, index: i64) {
+    /// Invalid indices are rejected without changing state or emitting events.
+    pub fn set_mode(&self, index: i64) -> bool {
         let mut events = Vec::new();
         {
             let mut inner = self.lock_mut();
+            let Ok(mode_index) = usize::try_from(index) else {
+                return false;
+            };
+            if mode_index >= inner.config.modes.len() {
+                return false;
+            }
             if index == inner.mode_index {
-                return;
+                return true;
             }
             inner.mode_index = index;
             inner.config.active_mode_index = index;
             events.push(AppEvent::ModeChanged { mode_index: index });
         }
         self.dispatch(events);
+        true
     }
 
     /// Select the button being edited (no event when unchanged).
-    pub fn select_button(&self, index: i64) {
+    /// Invalid indices are rejected without changing state or emitting events.
+    pub fn select_button(&self, index: i64) -> bool {
         let mut events = Vec::new();
         {
             let mut inner = self.lock_mut();
+            let Ok(button_index) = usize::try_from(index) else {
+                return false;
+            };
+            let Ok(mode_index) = usize::try_from(inner.mode_index) else {
+                return false;
+            };
+            let Some(mode) = inner.config.modes.get(mode_index) else {
+                return false;
+            };
+            if button_index >= mode.buttons.len() {
+                return false;
+            }
             if index == inner.selected_index {
-                return;
+                return true;
             }
             inner.selected_index = index;
             events.push(AppEvent::SelectionChanged { index });
         }
         self.dispatch(events);
+        true
     }
 
     /// Save the working config to disk and make it the new saved baseline.

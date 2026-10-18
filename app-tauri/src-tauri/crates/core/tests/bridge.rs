@@ -1,12 +1,16 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use octopad_core::bridge::{connect_device_events, run_import_from_legacy_dir};
+use octopad_core::bridge::{connect_device_events, run_import_from_legacy_dir, save_config};
 use octopad_core::config::{default_config, ConfigStore};
+use octopad_core::device::manager::{DeviceManager, DeviceTransport};
 use octopad_core::device::{DeviceEvent, TransportKind};
 use octopad_core::state::{AppEvent, AppState};
 use serde_json::Value;
 use tempfile::tempdir;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
 
 #[derive(Clone, Default)]
 struct EventRecorder(Arc<Mutex<Vec<AppEvent>>>);
@@ -24,6 +28,93 @@ impl EventRecorder {
 
 fn state_in(path: &std::path::Path) -> Arc<AppState> {
     Arc::new(AppState::new(ConfigStore::at(path.join("OctoPad"))))
+}
+
+#[derive(Clone)]
+struct FakeTransport {
+    status: Option<DeviceEvent>,
+    commands: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeTransport {
+    fn new(status: Option<DeviceEvent>, commands: Arc<Mutex<Vec<String>>>) -> Self {
+        Self { status, commands }
+    }
+}
+
+impl DeviceTransport for FakeTransport {
+    fn spawn(
+        &self,
+        tx: mpsc::Sender<DeviceEvent>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> JoinHandle<()> {
+        let status = self.status.clone();
+        tokio::spawn(async move {
+            if let Some(status) = status {
+                let _ = tx.send(status).await;
+            }
+            if !*shutdown.borrow() {
+                let _ = shutdown.changed().await;
+            }
+        })
+    }
+
+    fn send_command<'a>(
+        &'a self,
+        command: &'a str,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            self.commands.lock().unwrap().push(command.to_string());
+            true
+        })
+    }
+}
+
+struct RunningManager {
+    manager: DeviceManager,
+    events: mpsc::Receiver<DeviceEvent>,
+    shutdown: watch::Sender<bool>,
+    task: JoinHandle<()>,
+    commands: Arc<Mutex<Vec<String>>>,
+}
+
+async fn start_manager(connected: bool) -> RunningManager {
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let status = connected.then_some(DeviceEvent::StatusChanged {
+        transport: TransportKind::Ble,
+        connected: true,
+        port: None,
+        message: Some("Connected".to_string()),
+    });
+    let serial = FakeTransport::new(None, commands.clone());
+    let ble = FakeTransport::new(status, commands.clone());
+    let manager = DeviceManager::with_transports(Arc::new(serial), Arc::new(ble));
+    let (tx, events) = mpsc::channel(16);
+    let (shutdown, shutdown_rx) = watch::channel(false);
+    let task = manager.spawn(tx, shutdown_rx);
+    let mut running = RunningManager {
+        manager,
+        events,
+        shutdown,
+        task,
+        commands,
+    };
+    if connected {
+        assert!(matches!(
+            running.events.recv().await,
+            Some(DeviceEvent::StatusChanged {
+                transport: TransportKind::Ble,
+                connected: true,
+                ..
+            })
+        ));
+    }
+    running
+}
+
+async fn stop_manager(running: RunningManager) {
+    running.shutdown.send(true).unwrap();
+    running.task.await.unwrap();
 }
 
 #[tokio::test]
@@ -183,4 +274,57 @@ fn state_snapshot_contains_config_and_connection_statuses() {
     assert_eq!(snapshot["serial"]["connected"], Value::from(false));
     assert_eq!(snapshot["ble"]["connected"], Value::from(false));
     assert_eq!(snapshot["device"]["name"], Value::Null);
+    assert_eq!(
+        snapshot["configPath"],
+        state.store().config_path().to_string_lossy().as_ref()
+    );
+}
+
+#[tokio::test]
+async fn save_config_persists_and_syncs_timings_without_requiring_a_device() {
+    let temp = tempdir().unwrap();
+    let state = state_in(temp.path());
+    state.set_label("Unsaved");
+    let running = start_manager(false).await;
+
+    assert!(save_config(&state, &running.manager).await);
+    assert!(!state.is_dirty());
+    assert!(running.commands.lock().unwrap().is_empty());
+
+    stop_manager(running).await;
+}
+
+#[tokio::test]
+async fn save_config_sends_timings_after_a_successful_save() {
+    let temp = tempdir().unwrap();
+    let state = state_in(temp.path());
+    state.set_label("Unsaved");
+    let running = start_manager(true).await;
+
+    assert!(save_config(&state, &running.manager).await);
+
+    assert_eq!(
+        running.commands.lock().unwrap().as_slice(),
+        ["TIMING:25,250,450"]
+    );
+    assert!(!state.is_dirty());
+
+    stop_manager(running).await;
+}
+
+#[tokio::test]
+async fn failed_config_save_does_not_sync_timings() {
+    let temp = tempdir().unwrap();
+    let blocked_parent = temp.path().join("blocked");
+    std::fs::write(&blocked_parent, "not a directory").unwrap();
+    let store = ConfigStore::at(blocked_parent.join("OctoPad"));
+    let state = Arc::new(AppState::new(store));
+    state.set_label("Unsaved");
+    let running = start_manager(true).await;
+
+    assert!(!save_config(&state, &running.manager).await);
+    assert!(running.commands.lock().unwrap().is_empty());
+    assert!(state.is_dirty());
+
+    stop_manager(running).await;
 }
