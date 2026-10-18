@@ -2427,12 +2427,14 @@ version = "0.1.0"
 dependencies = [
  "btleplug",
  "dirs 6.0.0",
+ "futures",
  "serde",
  "serde_json",
  "serialport",
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -68,8 +68,9 @@ fn name_fallback_only_when_no_matching_uuid() {
 #[test]
 fn name_fallback_is_case_insensitive() {
     for name in ["OctoPad", "octopad", "OCTOPAD", "  OctoPad  "] {
-        let found = classify_device(&adv(Some(name), &[]))
-            .unwrap_or_else(|| panic!("{name:?} must match DEFAULT_DEVICE_NAME case-insensitively"));
+        let found = classify_device(&adv(Some(name), &[])).unwrap_or_else(|| {
+            panic!("{name:?} must match DEFAULT_DEVICE_NAME case-insensitively")
+        });
         assert!(!found.matched_by_uuid);
         // Surrounding whitespace is stripped, mirroring Python's .strip().
         assert_eq!(found.name, name.trim());
@@ -79,13 +80,11 @@ fn name_fallback_is_case_insensitive() {
 #[test]
 fn unknown_devices_are_not_discovered() {
     // Unrelated device with a name and foreign service UUIDs.
-    assert!(
-        classify_device(&adv(
-            Some("Random BLE Device"),
-            &["00001234-0000-1000-8000-00805f9b34fb"]
-        ))
-        .is_none()
-    );
+    assert!(classify_device(&adv(
+        Some("Random BLE Device"),
+        &["00001234-0000-1000-8000-00805f9b34fb"]
+    ))
+    .is_none());
     // Anonymous device with nothing to go on.
     assert!(classify_device(&adv(None, &[])).is_none());
     // Empty/whitespace-only name is not the default name.
