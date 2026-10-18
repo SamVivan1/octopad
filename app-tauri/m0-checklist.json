@@ -1,0 +1,97 @@
+{
+  "milestone": "M0",
+  "plan": "docs/superpowers/plans/2026-10-18-tauri-rewrite-m0.md",
+  "report": "app-tauri/m0-report.md",
+  "generated_at": "2026-10-18T21:12:24+07:00",
+  "status": "tentative-go-pending-owner-measurements",
+  "measurement_method": {
+    "definition": "Total RSS (Linux) / total WorkingSet64 (Windows) of the app process and all its children, one sample after a 4s idle wait, app freshly started with window shown.",
+    "linux_scripts": ["app-tauri/scripts/mem_baseline.sh", "app-tauri/scripts/mem_measure.sh"],
+    "windows_scripts": ["app-tauri/scripts/mem_baseline.ps1", "app-tauri/scripts/mem_measure.ps1"],
+    "units": "MB (1024-based), one decimal",
+    "output_line_format": "octopad_mem_mb=<MB> procs=<N> pattern=<P> idle_s=4 ts=<ISO8601>"
+  },
+  "tests": {
+    "command": "cargo test -p octopad-core --features serial,ble",
+    "date": "2026-10-18",
+    "passed": 31,
+    "failed": 0,
+    "ignored_hardware": 2,
+    "ignored_tests": [
+      "ble_spike::discover_octopad_with_hardware_does_not_panic",
+      "serial_config::probe_hello_with_hardware_never_panics"
+    ]
+  },
+  "baselines": {
+    "linux_pyside6_mb": null,
+    "linux_command": "app-tauri/scripts/mem_baseline.sh \"linux-app/main.py\" 4",
+    "linux_ts": null,
+    "windows_pyside6_mb": null,
+    "windows_command": "app-tauri\\scripts\\mem_baseline.ps1 -ProcessName python -IdleSeconds 4",
+    "windows_ts": null,
+    "windows_baseline_blocker": true
+  },
+  "tauri_measurements": {
+    "linux_release_mb": null,
+    "linux_release_command": "app-tauri/scripts/mem_measure.sh OctoPad 4",
+    "linux_release_ts": null,
+    "linux_dev_mb": null,
+    "windows_release_mb": null,
+    "windows_release_command": "app-tauri\\scripts\\mem_measure.ps1 -ProcessName OctoPad -IdleSeconds 4",
+    "windows_release_ts": null,
+    "mode": "release-pending (dev fallback allowed with uncertainty noted)"
+  },
+  "spikes": {
+    "serial_enumeration_no_device": {
+      "result": "pass",
+      "detail": "list_ports() returned Ok with 32 ttyS* entries, no panic; empty-vec case tested"
+    },
+    "config_paths_missing_dir": {
+      "result": "pass",
+      "detail": "legacy_config_dir() computes ~/.config/octopad (Unix) / %APPDATA%\\OctoPad (Windows) without filesystem access; missing dir cannot crash"
+    },
+    "ble_discovery_logic": {
+      "result": "pass",
+      "detail": "service-UUID-first matching (primary + legacy NUS), case-insensitive; name fallback only without matching UUID; renamed pad accepted"
+    },
+    "hello_parsing": {
+      "result": "pass",
+      "detail": "mirrors tests/test_parsers.py: brand check, optional version, case-insensitive, noise-tolerant, unnamed-pad default"
+    },
+    "device_busy_ble": {
+      "result": null,
+      "owner_action": "run spike_ble_discover with Python BLE bridge holding the pad; expect structured busy error, no freeze"
+    },
+    "device_busy_serial": {
+      "result": null,
+      "owner_action": "run probe_hello while legacy Python app owns the port; expect SerialError::Busy, no freeze"
+    },
+    "hardware_ble_discover_connect": {
+      "result": null,
+      "owner_action": "cargo test -p octopad-core --features ble -- --ignored"
+    },
+    "hardware_serial_hello": {
+      "result": null,
+      "owner_action": "cargo test -p octopad-core --features serial --test serial_config -- --ignored"
+    }
+  },
+  "uuids_verified": true,
+  "uuids": {
+    "SERVICE_UUID": "6f63746f-7061-4430-8001-000000000001",
+    "TX_UUID": "6f63746f-7061-4430-8001-000000000002",
+    "RX_UUID": "6f63746f-7061-4430-8001-000000000003",
+    "LEGACY_SERVICE_UUID": "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+    "LEGACY_TX_UUID": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+    "LEGACY_RX_UUID": "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+  },
+  "verdict_rules": {
+    "linux_max_mb": 100,
+    "windows_rule": "must-not-exceed-legacy-python-baseline"
+  },
+  "environment_issues": [
+    "Linux dev machine lacks libwebkit2gtk-4.1-dev (pkg-config headers); full-workspace cargo check/build of the Tauri app crate cannot run locally. cargo test -p octopad-core (no GUI dep) is unaffected; Windows CI is unaffected (WebView2 preinstalled).",
+    "No sudo on the Linux dev machine, cannot install the dev package.",
+    "pnpm not installed on the Linux dev machine; npm used instead (package-lock.json committed)."
+  ],
+  "icons": "placeholder generated with `tauri icon` from a 1024x1024 source (dark-slate 'OP'); replace before public release"
+}
