@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appState } from '../state';
-import type { AppSnapshot, Button } from '../types';
+import type { Action, AppSnapshot, Button, TriggerName } from '../types';
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const listenMock = vi.hoisted(() => vi.fn());
@@ -101,6 +101,25 @@ describe('ButtonsPage', () => {
         button.label = args?.text as string;
         return Promise.resolve();
       }
+      if (command === 'set_action_cmd') {
+        const button =
+          wireState.config.modes[wireState.modeIndex].buttons[wireState.selectedIndex];
+        const trigger = args?.trigger as TriggerName;
+        const index = args?.index as number;
+        const action = args?.action as Action;
+        const slot = button[trigger];
+        button[trigger] = Array.isArray(slot)
+          ? slot.map((item, itemIndex) => (itemIndex === index ? action : item))
+          : action;
+        return Promise.resolve();
+      }
+      if (command === 'remove_action_cmd') {
+        const button =
+          wireState.config.modes[wireState.modeIndex].buttons[wireState.selectedIndex];
+        const trigger = args?.trigger as TriggerName;
+        button[trigger] = { type: 'none' };
+        return Promise.resolve();
+      }
       return Promise.resolve(true);
     });
   });
@@ -154,5 +173,68 @@ describe('ButtonsPage', () => {
       'get_state_snapshot'
     ]));
     expect(wireState.config.modes[0].buttons[4].label).toBe('Updated key');
+  });
+
+  it('sends action edits with the trigger slot and retains unknown action metadata', async () => {
+    const button = wireState.config.modes[0].buttons[2];
+    button.double = [
+      { type: 'text', text: 'Before', vendorData: { retained: true } },
+      { type: 'media', mediaKey: 'MUTE' }
+    ];
+    render(ButtonsPage);
+
+    await fireEvent.change(screen.getByRole('textbox', { name: 'Text' }), {
+      target: { value: 'After' }
+    });
+    await waitFor(() => expect(commandOrder).toContain('set_action_cmd'));
+
+    const call = invokeMock.mock.calls.find(([command]) => command === 'set_action_cmd');
+    expect(call?.[1]).toEqual({
+      trigger: 'double',
+      index: 0,
+      action: { type: 'text', text: 'After', vendorData: { retained: true } }
+    });
+    expect(button.double[0]).toEqual({
+      type: 'text',
+      text: 'After',
+      vendorData: { retained: true }
+    });
+  });
+
+  it('keeps a legacy single-action object when editing its action', async () => {
+    const button = wireState.config.modes[0].buttons[2];
+    button.single = {
+      type: 'text',
+      text: 'Before',
+      vendorData: { retained: true }
+    };
+    button.double = { type: 'none' };
+    render(ButtonsPage);
+
+    await fireEvent.change(screen.getByRole('textbox', { name: 'Text' }), {
+      target: { value: 'After' }
+    });
+    await waitFor(() => expect(commandOrder).toContain('set_action_cmd'));
+
+    expect(button.single).toEqual({
+      type: 'text',
+      text: 'After',
+      vendorData: { retained: true }
+    });
+    expect(Array.isArray(button.single)).toBe(false);
+  });
+
+  it('keeps one none action in a trigger after removing its last action', async () => {
+    wireState.config.modes[0].buttons[2].single = { type: 'text', text: 'Last action' };
+    render(ButtonsPage);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Single action 1' }));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Single action 1 type' })).toBeTruthy()
+    );
+    expect(
+      (screen.getByRole('combobox', { name: 'Single action 1 type' }) as HTMLSelectElement).value
+    ).toBe('none');
+    expect(commandOrder).toEqual(['remove_action_cmd', 'get_state_snapshot']);
   });
 });

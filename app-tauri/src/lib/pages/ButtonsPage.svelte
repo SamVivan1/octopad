@@ -1,6 +1,16 @@
 <script lang="ts">
+  import type { Action, TriggerName } from '../types';
   import { appState, refreshAppSnapshot } from '../state';
-  import { selectButton, setLabel, setMode } from '../api';
+  import {
+    addAction,
+    moveAction,
+    removeAction,
+    selectButton,
+    setAction,
+    setLabel,
+    setMode
+  } from '../api';
+  import ActionInspector from '../components/ActionInspector.svelte';
   import KeyGrid from '../components/KeyGrid.svelte';
   import ModeSwitch from '../components/ModeSwitch.svelte';
 
@@ -61,6 +71,36 @@
       interactionBusy = false;
     }
   }
+
+  async function mutateActions(label: string, operation: () => Promise<void>) {
+    if (interactionBusy) return;
+    interactionBusy = true;
+    feedback = '';
+    try {
+      await operation();
+      await refreshAppSnapshot();
+    } catch (error) {
+      feedback = `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      interactionBusy = false;
+    }
+  }
+
+  function updateAction(trigger: TriggerName, index: number, action: Action) {
+    return mutateActions('Action update', () => setAction(trigger, index, action));
+  }
+
+  function addTriggerAction(trigger: TriggerName) {
+    return mutateActions('Add action', () => addAction(trigger));
+  }
+
+  function removeTriggerAction(trigger: TriggerName, index: number) {
+    return mutateActions('Remove action', () => removeAction(trigger, index));
+  }
+
+  function moveTriggerAction(trigger: TriggerName, index: number, delta: number) {
+    return mutateActions('Reorder action', () => moveAction(trigger, index, delta));
+  }
 </script>
 
 <section class="buttons-page" aria-labelledby="buttons-title">
@@ -95,26 +135,23 @@
         onSelect={selectKey}
       />
 
-      <aside class="inspector" aria-label="Selected key editor">
-        <h2>Key {selectedButton ? selectedButton.index + 1 : '—'}</h2>
-        {#if selectedButton}
-          <label for="key-label">Label</label>
-          <input
-            id="key-label"
-            aria-label="Current key label"
-            value={labelDraft}
-            disabled={interactionBusy}
-            onchange={(event) => updateLabel(event.currentTarget.value)}
-          />
-          <div class="trigger-summary">
-            <span>Single</span>
-            <span>Double</span>
-            <span>Hold</span>
-          </div>
-        {:else}
+      {#if selectedButton}
+        <ActionInspector
+          button={selectedButton}
+          {labelDraft}
+          disabled={interactionBusy}
+          onLabelChange={updateLabel}
+          onActionUpdate={updateAction}
+          onActionAdd={addTriggerAction}
+          onActionRemove={removeTriggerAction}
+          onActionMove={moveTriggerAction}
+        />
+      {:else}
+        <aside class="empty-inspector" aria-label="Selected key editor">
+          <h2>Selected key</h2>
           <p>No key is selected.</p>
-        {/if}
-      </aside>
+        </aside>
+      {/if}
     </div>
   {/if}
 </section>
@@ -135,8 +172,7 @@
   }
 
   .page-heading p,
-  .empty-state,
-  .inspector p {
+  .empty-state {
     margin: 0;
     color: var(--text-muted);
   }
@@ -148,74 +184,32 @@
     gap: var(--space-5);
   }
 
-  .inspector {
-    position: sticky;
-    top: var(--space-4);
+  .feedback {
+    color: var(--error);
+  }
+
+  .empty-inspector {
     display: grid;
-    max-height: calc(100vh - 7rem);
+    align-content: start;
     gap: var(--space-3);
-    overflow-y: auto;
     padding: var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface-raised);
   }
 
-  h2 {
+  .empty-inspector h2,
+  .empty-inspector p {
     margin: 0;
-    font-size: 1rem;
   }
 
-  label {
+  .empty-inspector p {
     color: var(--text-muted);
-    font-size: 0.85rem;
-  }
-
-  input {
-    min-width: 0;
-    min-height: 2.5rem;
-    padding: 0 var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--surface-base);
-  }
-
-  .trigger-summary {
-    display: grid;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
-  }
-
-  .trigger-summary span {
-    padding: var(--space-2);
-    border-radius: var(--radius-sm);
-    background: var(--surface-key);
-  }
-
-  .trigger-summary span:nth-child(1) {
-    color: var(--trigger-single);
-  }
-
-  .trigger-summary span:nth-child(2) {
-    color: var(--trigger-double);
-  }
-
-  .trigger-summary span:nth-child(3) {
-    color: var(--trigger-hold);
-  }
-
-  .feedback {
-    color: var(--error);
   }
 
   @media (max-width: 900px) {
     .editor-layout {
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    .inspector {
-      position: static;
-      max-height: none;
     }
   }
 </style>
