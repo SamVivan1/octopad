@@ -47,6 +47,8 @@ describe('Settings and Profiles pages', () => {
   let timingResult: boolean;
   let saveResult: boolean;
   let importFailure: Error | undefined;
+  let autostartEnabled: boolean;
+  let autostartFailure: Error | undefined;
 
   beforeEach(() => {
     wireState = makeSnapshot();
@@ -54,6 +56,8 @@ describe('Settings and Profiles pages', () => {
     timingResult = true;
     saveResult = true;
     importFailure = undefined;
+    autostartEnabled = false;
+    autostartFailure = undefined;
     appState.set({ snapshot: wireState, logs: [] });
     invokeMock.mockReset();
     listenMock.mockReset();
@@ -83,6 +87,14 @@ describe('Settings and Profiles pages', () => {
         wireState.config = { ...wireState.config, device: 'Imported Pad' };
         wireState.dirty = true;
         return Promise.resolve({ source: 'legacy' });
+      }
+      if (command === 'get_autostart_enabled_cmd') {
+        return Promise.resolve(autostartEnabled);
+      }
+      if (command === 'set_autostart_enabled_cmd') {
+        if (autostartFailure) return Promise.reject(autostartFailure);
+        autostartEnabled = args?.enabled as boolean;
+        return Promise.resolve();
       }
       return Promise.resolve(true);
     });
@@ -175,6 +187,36 @@ describe('Settings and Profiles pages', () => {
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toContain('Rename failed');
     expect(wireState.device.name).toBe('My Pad');
+  });
+
+  it('reads autostart state and writes changes from the Settings toggle', async () => {
+    autostartEnabled = true;
+    render(SettingsPage);
+    const toggle = await screen.findByRole('checkbox', {
+      name: 'Start automatically at login'
+    }) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith('get_autostart_enabled_cmd');
+
+    await fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('set_autostart_enabled_cmd', { enabled: false })
+    );
+    expect(toggle.checked).toBe(false);
+  });
+
+  it('keeps the autostart toggle unchanged and reports plugin failures', async () => {
+    autostartFailure = new Error('autostart permission denied');
+    render(SettingsPage);
+    const toggle = await screen.findByRole('checkbox', {
+      name: 'Start automatically at login'
+    }) as HTMLInputElement;
+
+    await fireEvent.click(toggle);
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('Autostart update failed');
+    expect(toggle.checked).toBe(false);
+    expect(autostartEnabled).toBe(false);
   });
 
   it('imports a legacy config into the working snapshot without saving it', async () => {

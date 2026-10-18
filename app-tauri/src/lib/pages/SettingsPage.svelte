@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { appState, refreshAppSnapshot } from '../state';
-  import { renameDevice, setTiming } from '../api';
+  import { getAutostartEnabled, renameDevice, setAutostartEnabled, setTiming } from '../api';
   import TimingControls from '../components/TimingControls.svelte';
   import type { AppSnapshot, TimingField } from '../types';
 
@@ -8,6 +9,13 @@
   let feedback = '';
   let renameDraft = '';
   let renameEdited = false;
+  let autostartEnabled = false;
+  let autostartLoading = true;
+  let autostartBusy = false;
+
+  onMount(() => {
+    void loadAutostart();
+  });
 
   $: snapshot = $appState.snapshot;
   $: if (snapshot && !busy && !renameEdited) {
@@ -27,6 +35,33 @@
     if (current.serial.connected) return current.serial.port ?? 'Serial device connected';
     if (current.ble.connected) return current.ble.message || 'Connected over Bluetooth LE';
     return current.ble.message || 'No device connected';
+  }
+
+  async function loadAutostart() {
+    try {
+      autostartEnabled = await getAutostartEnabled();
+    } catch (error) {
+      feedback = `Autostart status failed: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      autostartLoading = false;
+    }
+  }
+
+  async function updateAutostart(event: Event) {
+    if (autostartLoading || autostartBusy) return;
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const enabled = checkbox.checked;
+    checkbox.checked = autostartEnabled;
+    autostartBusy = true;
+    feedback = '';
+    try {
+      await setAutostartEnabled(enabled);
+      autostartEnabled = enabled;
+    } catch (error) {
+      feedback = `Autostart update failed: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      autostartBusy = false;
+    }
   }
 
   async function updateTiming(field: TimingField, value: number) {
@@ -119,6 +154,21 @@
         </div>
       </section>
 
+      <section class="settings-card autostart-card" aria-labelledby="autostart-title">
+        <h2 id="autostart-title">Startup</h2>
+        <label class="autostart-toggle">
+          <input
+            type="checkbox"
+            aria-label="Start automatically at login"
+            checked={autostartEnabled}
+            disabled={busy || autostartBusy || autostartLoading}
+            onchange={updateAutostart}
+          />
+          Start automatically at login
+        </label>
+        <p>Automatic startup launches OctoPad in the background.</p>
+      </section>
+
       <section class="settings-card" aria-label="Timing settings">
         <TimingControls
           values={snapshot.config}
@@ -184,6 +234,25 @@
   .settings-card > label {
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+
+  .autostart-card p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .autostart-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text);
+  }
+
+  .autostart-toggle input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--accent-strong);
   }
 
   .rename-row {
