@@ -1,3 +1,4 @@
+pub mod config;
 pub mod config_paths;
 pub mod platform;
 pub mod proto;
