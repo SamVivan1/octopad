@@ -23,13 +23,16 @@ pub fn import_legacy_config(state: State<'_, Arc<AppState>>) -> Result<ImportRep
 pub async fn save_config_cmd(
     state: State<'_, Arc<AppState>>,
     manager: State<'_, DeviceManager>,
-) -> bool {
-    bridge::save_config(state.inner().as_ref(), manager.inner()).await
+) -> Result<bool, String> {
+    Ok(bridge::save_config(state.inner().as_ref(), manager.inner()).await)
 }
 
 #[tauri::command]
-pub async fn send_device_command_cmd(command: String, manager: State<'_, DeviceManager>) -> bool {
-    manager.send_command(&command, true).await
+pub async fn send_device_command_cmd(
+    command: String,
+    manager: State<'_, DeviceManager>,
+) -> Result<bool, String> {
+    Ok(manager.send_command(&command, true).await)
 }
 
 #[tauri::command]
@@ -87,11 +90,11 @@ pub async fn rename_device_cmd(
     name: String,
     state: State<'_, Arc<AppState>>,
     manager: State<'_, DeviceManager>,
-) -> bool {
+) -> Result<bool, String> {
     let name = name.trim();
     if !manager.rename_device(name).await {
-        return false;
+        return Ok(false);
     }
     state.set_device_name(Some(name.to_string()));
-    true
+    Ok(true)
 }
