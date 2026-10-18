@@ -47,26 +47,43 @@ impl ConfigStore {
 
     /// Load the user configuration, filling in any missing default fields.
     ///
-    /// Python `load_config()` parity: missing file → defaults; malformed JSON
-    /// or a non-object top level → defaults + log line; otherwise a lenient
-    /// per-key merge (wrong-typed key → keep *that* default + warning).
+    /// Thin wrapper around [`ConfigStore::load_config_with_warnings`]: it
+    /// returns the loaded config and drops the load warnings. Callers that
+    /// surface warnings (the console page) use the warnings variant instead.
     pub fn load_config(&self) -> Config {
+        self.load_config_with_warnings().0
+    }
+
+    /// Load the user configuration together with every load-time warning the
+    /// console page shows (parity decisions 3 and 6 — one validation path on
+    /// both OSes).
+    ///
+    /// Python `load_config()` parity plus load-time validation: missing file →
+    /// defaults, empty warnings; malformed JSON or a non-object top level →
+    /// defaults, empty warnings (the log line carries the cause); otherwise a
+    /// lenient per-key merge (wrong-typed key → keep *that* default + warning),
+    /// then the shared clamp step: numeric timings outside their range are
+    /// clamped, an out-of-range `activeModeIndex` resets to 0, each with a
+    /// warning naming the field, the old value and the new one. Non-numeric
+    /// timing values are left untouched so `timing_command()` still returns
+    /// `None` for them (Python parity).
+    pub fn load_config_with_warnings(&self) -> (Config, Vec<String>) {
         let path = self.config_path();
         if !path.exists() {
-            return default_config();
+            return (default_config(), Vec::new());
         }
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(exc) => {
                 tracing::warn!("[CONFIG] Failed to read {}: {exc}", path.display());
-                return default_config();
+                return (default_config(), Vec::new());
             }
         };
         let stored: Value = match serde_json::from_str(&text) {
             Ok(value) => value,
             Err(exc) => {
                 tracing::warn!("[CONFIG] Failed to read {}: {exc}", path.display());
-                return default_config();
+                return (default_config(), Vec::new());
             }
         };
         let Some(stored) = stored.as_object() else {
@@ -74,9 +91,12 @@ impl ConfigStore {
                 "[CONFIG] {} is not a JSON object — using defaults",
                 path.display()
             );
-            return default_config();
+            return (default_config(), Vec::new());
         };
-        merge_stored(default_config(), stored)
+        let mut config = merge_stored(default_config(), stored);
+        let mut warnings = Vec::new();
+        clamp_loaded_values(&mut config, &mut warnings);
+        (config, warnings)
     }
 
     /// Save the configuration to disk (indent=2, plain UTF-8 — the
@@ -216,6 +236,87 @@ fn merge_stored(mut config: Config, stored: &Map<String, Value>) -> Config {
     merge_modes(&mut config, stored);
     migrate_config(&mut config);
     config
+}
+
+// ---------------------------------------------------------------------------
+// Load-time validation (parity decisions 3 & 6)
+// ---------------------------------------------------------------------------
+
+/// Shared timing ranges for both OSes: debounce 0–1000, click 50–2000,
+/// hold 50–3000 (decision 3). Firmware defaults stay 25/250/450.
+const TIMING_RANGES: [(&str, i64, i64); 3] = [
+    ("debounceMs", 0, 1000),
+    ("clickTimeoutMs", 50, 2000),
+    ("holdTimeoutMs", 50, 3000),
+];
+
+/// Validate the merged config the way both OSes do (decision 6): clamp
+/// out-of-range numeric timings and reset an out-of-range `activeModeIndex`,
+/// each with a warning the console page shows.
+///
+/// Only values that coerce to an integer are range-checked; a non-numeric
+/// timing (`"not-a-number"`, `null`) is deliberately left as-is so
+/// `timing_command()` returns `None` for it — same as Python's failed `int()`.
+fn clamp_loaded_values(config: &mut Config, warnings: &mut Vec<String>) {
+    for (field, min, max) in TIMING_RANGES {
+        let value = match field {
+            "debounceMs" => &mut config.debounce_ms,
+            "clickTimeoutMs" => &mut config.click_timeout_ms,
+            _ => &mut config.hold_timeout_ms,
+        };
+        let Some(number) = coerced_int(value) else {
+            continue;
+        };
+        if (min..=max).contains(&number) {
+            continue;
+        }
+        let clamped = number.clamp(min, max);
+        push_warning(
+            warnings,
+            format!(
+                "[CONFIG] Stored '{field}' {number} is out of range ({min}–{max}) — clamped to {clamped}"
+            ),
+        );
+        *value = Value::from(clamped);
+    }
+
+    // Python `load_config`: `if not (isinstance(active, int) and
+    // 0 <= active < len(config["modes"]))` — but instead of resetting
+    // silently, the new app says so.
+    let index = config.active_mode_index;
+    let mode_count = config.modes.len() as i64;
+    if index < 0 || index >= mode_count {
+        let last = mode_count.saturating_sub(1);
+        push_warning(
+            warnings,
+            format!(
+                "[CONFIG] Stored 'activeModeIndex' {index} is out of range (0–{last}) — reset to 0"
+            ),
+        );
+        config.active_mode_index = 0;
+    }
+}
+
+/// Record a load-time warning: logged for the terminal/serial log *and*
+/// returned so the console page can show it.
+fn push_warning(warnings: &mut Vec<String>, message: String) {
+    tracing::warn!("{message}");
+    warnings.push(message);
+}
+
+/// Python `int(value)` shape for a loosely-typed timing value: numbers (floats
+/// truncate), numeric strings (whitespace-tolerant) and bools coerce; anything
+/// else is not range-checkable.
+fn coerced_int(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|u| i64::try_from(u).ok()))
+            .or_else(|| number.as_f64().map(|f| f as i64)),
+        Value::String(text) => text.trim().parse::<i64>().ok(),
+        Value::Bool(flag) => Some(i64::from(*flag)),
+        _ => None,
+    }
 }
 
 /// Build a complete typed config from an already-parsed JSON value using the
