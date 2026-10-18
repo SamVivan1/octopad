@@ -14,11 +14,11 @@
 
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serialport::SerialPort;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::protocol::{self, Hello, SerialError};
@@ -86,31 +86,44 @@ pub struct SerialTransport {
     commands_tx: mpsc::UnboundedSender<Command>,
     commands_rx: Option<mpsc::UnboundedReceiver<Command>>,
     connected: Arc<AtomicBool>,
+    command_gate: Arc<Mutex<()>>,
 }
 
 struct Command {
     line: String,
-    log: bool,
+    result: oneshot::Sender<bool>,
 }
 
 /// Thread-safe command handle for the live serial transport.
 #[derive(Clone)]
 pub struct SerialCommandHandle {
     connected: Arc<AtomicBool>,
+    command_gate: Arc<Mutex<()>>,
     commands: mpsc::UnboundedSender<Command>,
 }
 
 impl SerialCommandHandle {
-    /// Queue a command for the connected serial session.
-    pub fn send_command(&self, command: &str) -> bool {
-        self.connected.load(Ordering::SeqCst)
-            && self
+    /// Send a command and return its write result for the current connection.
+    pub async fn send_command(&self, command: &str) -> bool {
+        let result = {
+            let _gate = self.command_gate.lock().unwrap();
+            if !self.connected.load(Ordering::SeqCst) {
+                return false;
+            }
+            let (result_tx, result_rx) = oneshot::channel();
+            if self
                 .commands
                 .send(Command {
                     line: command.trim().to_string(),
-                    log: false,
+                    result: result_tx,
                 })
-                .is_ok()
+                .is_err()
+            {
+                return false;
+            }
+            result_rx
+        };
+        result.await.unwrap_or(false)
     }
 }
 
@@ -134,6 +147,7 @@ impl SerialTransport {
             commands_tx,
             commands_rx: Some(commands_rx),
             connected: Arc::new(AtomicBool::new(false)),
+            command_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -141,6 +155,7 @@ impl SerialTransport {
     pub fn command_handle(&self) -> SerialCommandHandle {
         SerialCommandHandle {
             connected: self.connected.clone(),
+            command_gate: self.command_gate.clone(),
             commands: self.commands_tx.clone(),
         }
     }
@@ -235,7 +250,10 @@ impl SerialTransport {
             };
 
             last_port = Some(port.clone());
-            self.connected.store(true, Ordering::SeqCst);
+            {
+                let _gate = self.command_gate.lock().unwrap();
+                self.connected.store(true, Ordering::SeqCst);
+            }
             send(
                 &tx,
                 DeviceEvent::StatusChanged {
@@ -257,18 +275,36 @@ impl SerialTransport {
             loop {
                 if *shutdown.borrow() {
                     connection.close();
-                    self.connected.store(false, Ordering::SeqCst);
+                    self.reject_pending_commands(&mut commands);
                     return;
                 }
+                let mut write_failed = false;
                 while let Ok(command) = commands.try_recv() {
-                    if connection.write_line(&command.line).is_ok() && command.log {
-                        send(
-                            &tx,
-                            DeviceEvent::Log {
-                                line: format!("[TX] {}", command.line),
-                            },
-                        );
+                    match connection.write_line(&command.line) {
+                        Ok(()) => {
+                            let _ = command.result.send(true);
+                        }
+                        Err(err) => {
+                            tracing::debug!(port, error = %err, "serial write failed; reconnecting");
+                            let _ = command.result.send(false);
+                            write_failed = true;
+                            break;
+                        }
                     }
+                }
+                if write_failed {
+                    connection.close();
+                    self.reject_pending_commands(&mut commands);
+                    send(
+                        &tx,
+                        DeviceEvent::StatusChanged {
+                            transport: TransportKind::Serial,
+                            connected: false,
+                            port: Some(port.clone()),
+                            message: None,
+                        },
+                    );
+                    break;
                 }
                 match connection.read_line() {
                     Ok(Some(line)) => {
@@ -282,7 +318,7 @@ impl SerialTransport {
                     Err(err) => {
                         tracing::debug!(port, error = %err, "serial read failed; reconnecting");
                         connection.close();
-                        self.connected.store(false, Ordering::SeqCst);
+                        self.reject_pending_commands(&mut commands);
                         send(
                             &tx,
                             DeviceEvent::StatusChanged {
@@ -302,6 +338,14 @@ impl SerialTransport {
                 return;
             }
             self.sleeper.sleep(READ_ERROR_RETRY);
+        }
+    }
+
+    fn reject_pending_commands(&self, commands: &mut mpsc::UnboundedReceiver<Command>) {
+        let _gate = self.command_gate.lock().unwrap();
+        self.connected.store(false, Ordering::SeqCst);
+        while let Ok(command) = commands.try_recv() {
+            let _ = command.result.send(false);
         }
     }
 

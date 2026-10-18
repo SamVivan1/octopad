@@ -67,7 +67,11 @@ go/no-go number.
 - **[automated]** First-run startup attempts the legacy config import only
   when the new store is missing; on-demand import reloads the new config into
   `AppState` so dirty tracking is updated.
-- Core suite after Task 8: 192 passed, 0 failed, 3 hardware-only tests ignored.
+- **[automated]** Device command results now reflect actual transport writes;
+  failed serial writes fall back to BLE, and queued serial commands are
+  discarded when their connection drops.
+- Core suite after the Task 8 review fix: 195 passed, 0 failed, 3 hardware-only
+  tests ignored.
 - **[owner]** Linux Tauri workspace compilation still needs WebKitGTK 4.1,
   libsoup 3, and JavaScriptCoreGTK 4.1 development packages; the Windows
   workflow's workspace check is the other app-crate compile gate.

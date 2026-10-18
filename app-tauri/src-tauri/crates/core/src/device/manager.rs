@@ -1,5 +1,7 @@
 //! Unified command routing and event merging for serial and BLE transports.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -10,6 +12,8 @@ use crate::config::{self, Config};
 
 use super::{DeviceEvent, TransportKind};
 
+pub type CommandFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
 /// A transport the manager can spawn and route commands through.
 pub trait DeviceTransport: Send + Sync {
     /// Spawn the transport's event producer.
@@ -19,8 +23,8 @@ pub trait DeviceTransport: Send + Sync {
         shutdown: watch::Receiver<bool>,
     ) -> JoinHandle<()>;
 
-    /// Send one command. Logging is centralized by [`DeviceManager`].
-    fn send_command(&self, command: &str) -> bool;
+    /// Send one command and report the transport write result.
+    fn send_command<'a>(&'a self, command: &'a str) -> CommandFuture<'a>;
 }
 
 /// Serial-preferred device manager.
@@ -152,17 +156,20 @@ impl DeviceManager {
     }
 
     /// Send a command over serial first, then BLE if serial is unavailable.
-    pub fn send_command(&self, command: &str, log: bool) -> bool {
+    pub async fn send_command(&self, command: &str, log: bool) -> bool {
         let command = command.trim();
         let (transport, sent) = if self.serial_connected.load(Ordering::SeqCst) {
-            if self.serial.send_command(command) {
+            if self.serial.send_command(command).await {
                 (Some(TransportKind::Serial), true)
-            } else if self.ble_connected.load(Ordering::SeqCst) && self.ble.send_command(command) {
+            } else if self.ble_connected.load(Ordering::SeqCst)
+                && self.ble.send_command(command).await
+            {
                 (Some(TransportKind::Ble), true)
             } else {
                 (None, false)
             }
-        } else if self.ble_connected.load(Ordering::SeqCst) && self.ble.send_command(command) {
+        } else if self.ble_connected.load(Ordering::SeqCst) && self.ble.send_command(command).await
+        {
             (Some(TransportKind::Ble), true)
         } else {
             (None, false)
@@ -184,20 +191,20 @@ impl DeviceManager {
     }
 
     /// Synchronize timings if they are valid, without emitting a TX log.
-    pub fn sync_timings(&self, config: &Config) -> bool {
+    pub async fn sync_timings(&self, config: &Config) -> bool {
         let Some(command) = config::timing_command(config) else {
             return false;
         };
-        self.send_command(&command, false)
+        self.send_command(&command, false).await
     }
 
     /// Strip and validate a device name before sending its rename command.
-    pub fn rename_device(&self, name: &str) -> bool {
+    pub async fn rename_device(&self, name: &str) -> bool {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 24 {
             return false;
         }
-        self.send_command(&format!("NAME:{name}"), true)
+        self.send_command(&format!("NAME:{name}"), true).await
     }
 }
 
@@ -227,7 +234,7 @@ async fn forward_event(
         return false;
     }
     if push_timings {
-        let _ = manager.sync_timings(&config::default_config());
+        let _ = manager.sync_timings(&config::default_config()).await;
     }
     true
 }
@@ -251,8 +258,8 @@ impl DeviceTransport for SerialAdapter {
         }
     }
 
-    fn send_command(&self, command: &str) -> bool {
-        self.command_handle.send_command(command)
+    fn send_command<'a>(&'a self, command: &'a str) -> CommandFuture<'a> {
+        Box::pin(self.command_handle.send_command(command))
     }
 }
 
@@ -275,8 +282,8 @@ impl DeviceTransport for BleAdapter {
         }
     }
 
-    fn send_command(&self, command: &str) -> bool {
-        self.command_handle.send_command(command, false)
+    fn send_command<'a>(&'a self, command: &'a str) -> CommandFuture<'a> {
+        Box::pin(self.command_handle.send_command(command, false))
     }
 }
 
@@ -297,7 +304,7 @@ impl DeviceTransport for UnavailableTransport {
         })
     }
 
-    fn send_command(&self, _command: &str) -> bool {
-        false
+    fn send_command<'a>(&'a self, _command: &'a str) -> CommandFuture<'a> {
+        Box::pin(async { false })
     }
 }

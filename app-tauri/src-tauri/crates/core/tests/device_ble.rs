@@ -593,7 +593,7 @@ mod transport {
         assert_eq!(*durations.lock().unwrap(), vec![Duration::from_secs(3)]);
 
         assert!(commands.is_connected());
-        assert!(commands.send_command("WHO", true));
+        assert!(commands.send_command("WHO", true).await);
 
         // Stop the event consumer first so a stalled receiver can never block
         // the transport's next send (the channel is bounded).
@@ -637,7 +637,7 @@ mod transport {
         .await;
         assert_eq!(events, vec![searching(), connected(ADDRESS)]);
         assert!(commands.is_connected());
-        assert!(commands.send_command("WHO", true));
+        assert!(commands.send_command("WHO", true).await);
 
         drop(rx);
         let _ = shutdown_tx.send(true);
@@ -681,7 +681,7 @@ mod transport {
         assert!(commands.is_connected());
 
         // log=true: the write reaches RX and a `[TX-BLE]` line is emitted.
-        assert!(commands.send_command("NAME:My Pad", true));
+        assert!(commands.send_command("NAME:My Pad", true).await);
         let logged = collect_until(
             &mut rx,
             |event| matches!(event, DeviceEvent::Log { line } if line.starts_with("[TX-BLE]")),
@@ -695,7 +695,7 @@ mod transport {
         );
 
         // log=false (Python `sync_timings`): the write happens without a log.
-        assert!(commands.send_command("TIMING:25,250,450", false));
+        assert!(commands.send_command("TIMING:25,250,450", false).await);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while writes.lock().unwrap().len() < 2 {
             assert!(
@@ -724,7 +724,7 @@ mod transport {
             .expect("the transport must stop after shutdown")
             .expect("the transport task must not panic");
         assert!(!commands.is_connected());
-        assert!(!commands.send_command("WHO", true));
+        assert!(!commands.send_command("WHO", true).await);
     }
 
     /// A pad without an RX characteristic still connects, but commands are
@@ -758,7 +758,7 @@ mod transport {
         .await;
 
         assert!(commands.is_connected());
-        assert!(!commands.send_command("WHO", true));
+        assert!(!commands.send_command("WHO", true).await);
         assert!(writes.lock().unwrap().is_empty());
 
         // Stop the event consumer first so a stalled receiver can never block
