@@ -520,19 +520,38 @@ fn mode_and_selection_early_return_without_an_event_when_unchanged() {
     let recorder = Recorder::new();
     let _sub = state.subscribe(recorder.callback());
 
-    state.set_mode(0);
-    state.select_button(0);
+    assert!(state.set_mode(0));
+    assert!(state.select_button(0));
     assert!(recorder.events().is_empty());
 
-    state.set_mode(1);
+    assert!(state.set_mode(1));
     assert_eq!(recorder.names(), vec!["mode-changed"]);
     assert!(!state.has_changes());
 
     recorder.clear();
-    state.select_button(2);
+    assert!(state.select_button(2));
     assert_eq!(recorder.names(), vec!["selection-changed"]);
     assert_eq!(state.selected_index(), 2);
     assert!(!state.has_changes());
+}
+
+#[test]
+fn invalid_mode_and_button_indices_leave_state_and_events_unchanged() {
+    let dir = tempdir().unwrap();
+    let state = state_in(&dir);
+    let recorder = Recorder::new();
+    let _sub = state.subscribe(recorder.callback());
+    let config_before = state.config();
+
+    assert!(!state.set_mode(-1));
+    assert!(!state.set_mode(2));
+    assert!(!state.select_button(-1));
+    assert!(!state.select_button(8));
+
+    assert_eq!(state.config(), config_before);
+    assert_eq!(state.mode_index(), 0);
+    assert_eq!(state.selected_index(), 0);
+    assert!(recorder.events().is_empty());
 }
 
 #[test]

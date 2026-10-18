@@ -63,6 +63,15 @@ pub fn run() {
             commands::device::get_state_snapshot,
             commands::device::import_legacy_config,
             commands::device::save_config_cmd,
+            commands::device::send_device_command_cmd,
+            commands::device::set_mode_cmd,
+            commands::device::select_button_cmd,
+            commands::device::set_label_cmd,
+            commands::device::set_action_cmd,
+            commands::device::add_action_cmd,
+            commands::device::remove_action_cmd,
+            commands::device::move_action_cmd,
+            commands::device::set_timing_cmd,
             commands::device::list_presets_cmd,
             commands::device::rename_device_cmd
         ])

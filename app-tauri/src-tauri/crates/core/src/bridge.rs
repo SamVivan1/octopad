@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::{import_legacy, ConfigStore, ImportError, ImportReport};
 use crate::config_paths::legacy_config_dir;
+use crate::device::manager::DeviceManager;
 use crate::device::{DeviceEvent, TransportKind};
 use crate::state::AppState;
 
@@ -76,10 +77,20 @@ pub fn run_import_from_legacy_dir(
     Ok(report)
 }
 
+/// Persist the current config before best-effort timing synchronization.
+pub async fn save_config(state: &AppState, manager: &DeviceManager) -> bool {
+    if !state.save() {
+        return false;
+    }
+    let _ = manager.sync_timings(&state.config()).await;
+    true
+}
+
 /// Build the current snapshot consumed by the future frontend.
 pub fn state_snapshot(state: &AppState) -> Value {
     json!({
         "config": state.config(),
+        "configPath": state.store().config_path().to_string_lossy().into_owned(),
         "modeIndex": state.mode_index(),
         "selectedIndex": state.selected_index(),
         "dirty": state.is_dirty(),
