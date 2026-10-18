@@ -6,8 +6,8 @@
 //! defaults); every other stored value is merged into the defaults with a type
 //! check, so a single bad key never resets the whole configuration.
 
-use super::model::{Action, Button, Config};
-use super::{action_from_value, default_action, default_config, migrate_config};
+use super::model::{Button, Config, TriggerActions};
+use super::{action_from_value, default_config, from_json_list, migrate_config};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -377,31 +377,15 @@ fn merge_button(base: &Map<String, Value>, template: &Button) -> Button {
     merged
 }
 
-/// Port of the trigger half of Python `_merge_button`: a stored list yields
-/// its dict entries, a dict with a truthy `type` wins as-is, anything else
-/// keeps the template's trigger.
-fn merge_trigger(raw: Option<&Value>, template: &Action) -> Action {
+/// Port of the trigger half of Python `_merge_button`: a stored list keeps
+/// **all** of its dict entries, a dict with a truthy `type` wins as-is (legacy
+/// dict shape preserved), anything else keeps the template's trigger.
+fn merge_trigger(raw: Option<&Value>, template: &TriggerActions) -> TriggerActions {
     match raw {
-        Some(Value::Array(items)) => {
-            let mut dicts = items.iter().filter(|item| item.is_object());
-            match dicts.next() {
-                Some(first) => {
-                    // Python keeps every dict of `clean`; the Task-1 model
-                    // holds one action per trigger slot, so only the first
-                    // survives here.
-                    if dicts.next().is_some() {
-                        tracing::warn!(
-                            "[CONFIG] Trigger holds multiple actions — only the first is kept"
-                        );
-                    }
-                    action_from_value(first)
-                }
-                // Python: `clean or [{"type": "none"}]`
-                None => default_action("none"),
-            }
-        }
+        // Python: `clean or [{"type": "none"}]`.
+        Some(Value::Array(items)) => from_json_list(items),
         Some(value @ Value::Object(_)) if python_truthy(value.get("type")) => {
-            action_from_value(value)
+            TriggerActions::One(action_from_value(value))
         }
         // Missing, scalar, or a dict without a truthy "type" → template wins.
         _ => template.clone(),

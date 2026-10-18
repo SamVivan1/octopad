@@ -9,7 +9,7 @@ pub mod store;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-pub use model::{Action, Button, Config, Mode};
+pub use model::{Action, Button, Config, Mode, TriggerActions};
 pub use store::{preset_slug, ConfigStore};
 
 /// Schema version of the stored configuration (independent of the product
@@ -84,9 +84,27 @@ fn button(
         index: index as i64,
         pin: PINOUT[index],
         label: label.to_string(),
-        single,
-        double: double.unwrap_or_else(none_action),
-        hold: hold.unwrap_or_else(none_action),
+        // Python's default config stores every trigger as a legacy dict —
+        // `One` keeps that shape through the round-trip.
+        single: TriggerActions::One(single),
+        double: TriggerActions::One(double.unwrap_or_else(none_action)),
+        hold: TriggerActions::One(hold.unwrap_or_else(none_action)),
+    }
+}
+
+/// Normalize a raw JSON list into `TriggerActions` with `_merge_button`
+/// semantics: dict entries only (`clean`), empty collapses to
+/// `[{"type": "none"}]` (Python: `clean or [{"type": "none"}]`).
+pub(crate) fn from_json_list(items: &[Value]) -> TriggerActions {
+    let clean: Vec<Action> = items
+        .iter()
+        .filter(|item| item.is_object())
+        .map(action_from_value)
+        .collect();
+    if clean.is_empty() {
+        TriggerActions::One(default_action("none"))
+    } else {
+        TriggerActions::Many(clean)
     }
 }
 
