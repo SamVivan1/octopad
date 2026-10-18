@@ -362,3 +362,25 @@ between the two apps or between a README and the code.
     — and looks only for that one as its notify source
     (`windows-app/ble_bridge.py:28,258`). Check which is correct against real
     legacy firmware before freezing the new app's UUID table.
+
+## 7b. Resolved decisions (2026-10-18, after owner review)
+
+The 16 questions above are kept as history. These are the decided answers;
+they are binding for the rewrite (M2 UI structure, M3/M4 acceptance).
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| 1 | **A failed action does not stop the chain** (Linux behavior); each failure is written to the console as an error line. | Multi-action chains with `delay` are the reason lists exist; aborting silently on one failure is worse than surfacing the error. |
+| 2 | **Profiles is a dedicated top-level page** (Windows structure): current profile, built-in + user presets, import/export. Settings keeps only connection/timing/theme. | Folding it into Settings (Linux) overcrowds one page; a dedicated page has room for the preset list and the import/export flow. |
+| 3 | Shared timing ranges: **debounce 0–1000 step 5, click 50–2000 step 5, hold 50–3000 step 5**; firmware defaults stay 25/250/450. Out-of-range values in a file are **clamped with a warning**. | Union of both apps so an imported Windows config is never rejected; one step value keeps the slider feel identical. |
+| 4 | **OS-neutral labels**, ids unchanged: "Productivity" preset, "Screenshot (Area)", "Lock Session". | One shared UI; ids stay stable so presets/profiles stay portable between OSes. |
+| 5 | Action type label is **"Script"**. The default command text stays OS-specific (`notify-send` on Linux, `msg *` on Windows) — a documented, intentional exception. | The command is platform-specific by nature; a shared default would fail on one OS. |
+| 6 | One validation path for both OSes: timings coerced/clamped per decision 3; **out-of-range `activeModeIndex` resets to 0** with a warning; load warnings surface in the console page. | Removes the "hand-edited config behaves differently per OS" divergence. |
+| 7 | Import validation follows the **stricter Linux rule** (action-list items must be objects); the lenient runtime merge still accepts legacy single dicts. | Strict at the import boundary, tolerant for incremental edits in real files. |
+| 8 | **Single instance on both OSes.** A second launch focuses the existing window; a `--hidden`/autostart launch signals the running instance instead of starting a second one. | Prevents two processes fighting over the same serial port / BLE session. |
+| 9–11 | **Fix the documentation to match the code**: closing the window hides to the tray (the app keeps running); the Windows Python floor is 3.10+; the Linux README stops claiming the app is not a resident background app. Autostart stays on by default (as the deb does today) and gains an in-app toggle. | The behavior is intentional and useful; the docs were stale. |
+| 12 | **Dark-only custom theme in v1** (as Linux does today), built on design tokens so a light/system-following variant can be added later without rework. | One identical design on both OSes; smallest M2 surface. |
+| 13 | Device name **and** firmware version are shown on both OSes (Linux behavior), in the header/status area. | Windows tracked but never showed it; showing it is the more useful behavior. |
+| 14 | Import **loads into the editor and requires an explicit Save** (Linux flow). The automatic first-run legacy import (M1) is the one exception: no user interaction. | No silent overwrite of the user's current configuration. |
+| 15 | **No onboarding wizard.** First run uses defaults (or the auto-imported legacy config) and the Profiles page makes that state visible. | Neither app had onboarding; a wizard is new-feature scope. |
+| 16 | Legacy NUS mapping follows **Linux/standard**: notify `6e400003…`, write `6e400002…`. The Windows Python mapping is a bug and is not replicated. Verify against real legacy hardware if one becomes available. | Matches the Nordic UART convention and the firmware's own layout. |
