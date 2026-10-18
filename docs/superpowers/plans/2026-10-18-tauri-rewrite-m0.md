@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- Do not modify any files outside `app-tauri/` and `docs/superpowers/plans/`.
+- Only exception to file scope: add `.github/workflows/tauri-m0.yml` in Task 5 to produce the first Windows CI artifact. Do not modify other files outside `app-tauri/` and `docs/superpowers/plans/` unless explicitly necessary to support this workflow.
 - Never change the Arduino firmware.
 - Target OS floors: Windows 10+ x64, Linux with webkit2gtk-4.1 (Ubuntu 22.04+, recent Fedora).
-- Memory rule: Linux fresh boot ≤ ~100 MB; for Windows, do not exceed the legacy Python Windows baseline (measured in this task). Measurement method: total RSS of app process(es), idle immediately after fresh boot.
+- Memory rule: Linux fresh boot ≤ ~100 MB; for Windows, do not exceed the legacy Python Windows baseline (measured in this task). Measurement method: total RSS of all app process(es) (sum children), idle immediately after fresh boot. Prioritize release binary (`pnpm tauri build`) measurement; record dev build numbers if release not available, with uncertainty noted.
 - Project structure: `app-tauri/` lives in this repo, next to `linux-app/` and `windows-app/`.
 - Use the existing device protocol: `SERVICE_UUID=6f63746f-7061-4430-8001-000000000001`, `TX_UUID=6f63746f-7061-4430-8001-000000000002`, `RX_UUID=6f63746f-7061-4430-8001-000000000003`, with legacy Nordic-UART UUIDs accepted for discovery.
 - Be explicit about pass/fail for M0; if the memory go is a no-go, the report must state the alternatives and a concrete recommendation.
@@ -109,9 +109,11 @@
 
 - [ ] **Step 4: Add Tauri command for spike (optional but useful).** Add `#[tauri::command] async fn spike_ble_discover(timeout_ms: u64) -> Result<Vec<DiscoveredDto>, String>` in backend that calls core ble_spike. This allows owner to run spike from UI if desired.
 
-- [ ] **Step 5: Verify build and logic tests.** `cargo test --manifest-path src-tauri/Cargo.toml --lib --tests` (hardware test may be skipped; logic tests must pass).
+- [ ] **Step 5: Add minimal BLE connect (gated by hardware).** Implement minimal connect attempt behind `btleplug` feature: find device by service UUID (or legacy), connect, read TX characteristic once (to receive HELLO if present), then disconnect cleanly. Do not implement full event stream. On "device busy" (adapter/GATT in use) return a structured error with that reason. Skip gracefully if no adapter/devices.
 
-- [ ] **Step 6: Commit.** `git add app-tauri/src-tauri/crates/core/src/ble_spike.rs app-tauri/src-tauri/crates/core/tests/ble_spike.rs app-tauri/src-tauri/crates/core/Cargo.toml app-tauri/src-tauri/src/lib.rs` (if modified); commit `feat(tauri-m0): add btleplug discovery spike matching Python UUID logic`.
+- [ ] **Step 6: Verify build and logic tests.** `cargo test --manifest-path src-tauri/Cargo.toml --lib --tests` (hardware test may be skipped; logic tests must pass).
+
+- [ ] **Step 7: Commit.** `git add app-tauri/src-tauri/crates/core/src/ble_spike.rs app-tauri/src-tauri/crates/core/tests/ble_spike.rs app-tauri/src-tauri/crates/core/Cargo.toml app-tauri/src-tauri/src/lib.rs` (if modified); commit `feat(tauri-m0): add btleplug discovery+minimal connect spike matching Python UUID logic`.
 
 ---
 
@@ -125,19 +127,21 @@
 
 **Interfaces:**
 - Consumes: `config_paths::legacy_config_dir()`
-- Produces: `serial_spike::list_ports() -> Vec<String>` (feature-gated), and `serial_spike::probe_hello` placeholder (documented) — spike only, no full implementation of SerialDaemonListener yet.
+- Produces: `serial_spike::list_ports() -> Vec<String>` (feature-gated), and `serial_spike::probe_hello(port_path: &str, timeout_ms: u64) -> Result<Option<Hello>, String>` returning minimal HELLO read (gated by hardware).
 
-- [ ] **Step 1: Write failing tests.** Test `legacy_config_dir()` returns expected suffix per platform; serial list returns non-panicking result (empty Vec when nothing attached).
+- [ ] **Step 1: Write failing tests.** Test `legacy_config_dir()` returns expected suffix per platform; serial list returns non-panicking result (empty Vec when nothing attached). Add unit test for HELLO parsing helper.
 
-- [ ] **Step 2: Run tests to fail.** `cargo test --manifest-path src-tauri/Cargo.toml --test serial_config` → FAIL (until implemented).
+- [ ] **Step 2: Run tests to fail.** `cargo test --manifest-path app-tauri/src-tauri/Cargo.toml --test serial_config` → FAIL (until implemented).
 
 - [ ] **Step 3: Implement serial spike.** `serialport = { version = "4", optional = true }`. Return port names. Add command `#[tauri::command] fn spike_list_ports() -> Result<Vec<String>, String>`.
 
-- [ ] **Step 4: Expose config path via command.** `#[tauri::command] fn spike_legacy_config_dir() -> String` returning `legacy_config_dir().to_string_lossy().to_string()`.
+- [ ] **Step 4: Add minimal serial I/O probe (gated by hardware).** Implement `probe_hello` that opens port at 115200, reads until timeout looking for `HELLO:OCTOPAD:...` (reuse `parse_hello` logic or mirror), closes cleanly. Return structured busy/permission errors; skip if port not found.
 
-- [ ] **Step 5: Verify.** `cargo test --manifest-path src-tauri/Cargo.toml --test serial_config` passes.
+- [ ] **Step 5: Expose config path via command.** `#[tauri::command] fn spike_legacy_config_dir() -> String` returning `legacy_config_dir().to_string_lossy().to_string()`.
 
-- [ ] **Step 6: Commit.** `git add app-tauri/src-tauri/crates/core/src/serial_spike.rs app-tauri/src-tauri/src/commands app-tauri/src-tauri/crates/core/tests/serial_config.rs` (as needed); commit `feat(tauri-m0): add serial enumeration spike and config path command`.
+- [ ] **Step 6: Verify.** `cargo test --manifest-path app-tauri/src-tauri/Cargo.toml --test serial_config` passes.
+
+- [ ] **Step 7: Commit.** `git add app-tauri/src-tauri/crates/core/src/serial_spike.rs app-tauri/src-tauri/src/commands app-tauri/src-tauri/crates/core/tests/serial_config.rs` (as needed); commit `feat(tauri-m0): add serial enumeration + minimal hello probe and config path command`.
 
 ---
 
@@ -160,24 +164,26 @@
 
 - [ ] **Step 2: Write measurement scripts.** Linux: use `ps`, `pmap` or `/proc/<pid>/status` RSS/VSZ; wait for idle (e.g. 3–5 seconds after window shown); sum child processes if any. Windows: use PowerShell `Get-Process | Measure-Object -Property WorkingSet64 -Sum` or `tasklist` + WMI; document method. Both scripts must write a one-line summary.
 
-- [ ] **Step 3: Capture legacy baselines (owner).** Run baseline scripts against the running Python apps (current installed/running ones) on Linux and Windows as available. Record exact commands, RSS in MB (integer or one decimal), and timestamp.
+- [ ] **Step 3: Capture legacy baselines (owner).** Run baseline scripts against the running Python apps on Linux and Windows. Record exact commands, RSS in MB (integer or one decimal), timestamp, and method (sum of app processes). If Windows baseline cannot be captured at this moment, mark as **BLOCKER** in the report.
 
-- [ ] **Step 4: Build and measure Tauri (dev).** `cd app-tauri && pnpm tauri dev` (backgrounded) — wait for UI ready, measure RSS, then stop. Record. Also try `pnpm tauri build` to produce a release binary for measurement if time allows.
+- [ ] **Step 4: Build and measure Tauri (release first).** Prioritize `cd app-tauri && pnpm tauri build`. Measure total RSS of all app process(es) including children, idle immediately after fresh boot. If release unavailable, measure `pnpm tauri dev` (backgrounded, idle) and mark as dev-mode with uncertainty.
 
-- [ ] **Step 5: Run spikes (owner device).** Use Tauri dev UI/commands to run BLE discovery (with Python app closed if needed), serial enumeration, and log results. Verify UUIDs match exactly. Record any "device busy" behavior.
+- [ ] **Step 5: Run spikes (owner device).** Use Tauri commands/UI to run BLE discovery+minimal connect and serial enumeration+hello probe (Python app closed if needed). Explicitly test "device busy": with Python BLE bridge running, attempt BLE ops and record structured error/behavior. Log results, verify UUIDs match exactly.
 
-- [ ] **Step 6: Fill report and decide.** Populate `m0-report.md` completely with numbers. State: **GO** or **NO-GO** for proceeding to M1–M5 as specified. If NO-GO (Windows > baseline or Linux > 100MB), list at least two concrete alternatives (e.g. defer heavy UI panels, use smaller WebView hints, or accept Windows baseline exception with explicit rationale). If GO, state conditions.
+- [ ] **Step 6: Add minimal Windows CI workflow.** Create `.github/workflows/tauri-m0.yml` (only exception to scope): builds `app-tauri` on `windows-latest`, runs tests/check, and uploads NSIS/Windows bundle artifact. Keep minimal; do not touch other workflow files.
 
-- [ ] **Step 7: Commit.** `git add app-tauri/scripts app-tauri/m0-report.md app-tauri/m0-checklist.json app-tauri/README.md`; commit `docs(tauri-m0): add M0 report, measurement scripts, and go/no-go`.
+- [ ] **Step 7: Fill report and decide.** Populate `m0-report.md` completely with numbers. State: **GO** or **NO-GO** for proceeding to M1–M5 as specified. If NO-GO (Windows > baseline or Linux > 100MB), list at least two concrete alternatives (e.g. defer heavy UI panels, use smaller WebView hints, or accept Windows baseline exception with explicit rationale). If GO, state conditions.
+
+- [ ] **Step 8: Commit.** `git add app-tauri/scripts app-tauri/m0-report.md app-tauri/m0-checklist.json app-tauri/README.md .github/workflows/tauri-m0.yml`; commit `docs(tauri-m0): add M0 report, measurement scripts, Windows CI artifact, and go/no-go`.
 
 ---
 
 ### Final M0 verification
 
-- [ ] **All tasks committed.** History shows 5 commits as above.
+- [ ] **All tasks committed.** History shows 5 commits as above (with M0 CI workflow added).
 - [ ] **Repo state clean.** `git diff --name-only --cached` and working tree clean except planned artifacts.
 - [ ] **Build check.** `cargo check --manifest-path app-tauri/src-tauri/Cargo.toml` succeeds.
 - [ ] **Tests pass.** `cargo test --manifest-path app-tauri/src-tauri/Cargo.toml` passes (hardware-dependent tests may be skipped but logic tests pass).
-- [ ] **Report is actionable.** `m0-report.md` contains the owner's measured numbers (or clearly marked TBDs if owner must run on Windows now) and an unambiguous GO/NO-GO.
+- [ ] **Report is actionable.** `m0-report.md` contains measured numbers (Windows baseline must not be BLOCKER without owner input recorded) and an unambiguous GO/NO-GO. `m0-checklist.json` captures timestamps, OS, mode (release/dev), RSS sum method, and observed device-busy results.
 
 **Handoff:** After committing, present `docs/superpowers/plans/2026-10-18-tauri-rewrite-m0.md` and `app-tauri/m0-report.md` (draft) to the owner for review. If GO, the next step is to write M1 plan using the same pattern; if NO-GO, discuss alternatives before proceeding.
