@@ -1,3 +1,4 @@
+pub mod bridge;
 pub mod config;
 pub mod config_paths;
 pub mod device;

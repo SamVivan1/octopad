@@ -56,3 +56,20 @@ go/no-go number.
 - Home Assistant client, app scanner, tray, audio-output switching — M3.
 - Profiles (import/export) and the built-in preset gallery — M3.
 - Any UI rendering — M2.
+
+## Task 8 — state/device bridge and command surface
+
+- **[automated]** Device events now update `AppState`; logs and button
+  triggers are forwarded as `serial-log` events.
+- **[automated]** The app initializes the core state and transports, forwards
+  flat `octopad://<event-name>` payloads to Tauri, and exposes state snapshot,
+  import, save, preset-list, and rename commands.
+- **[automated]** First-run startup attempts the legacy config import only
+  when the new store is missing; on-demand import reloads the new config into
+  `AppState` so dirty tracking is updated.
+- Core suite after Task 8: 192 passed, 0 failed, 3 hardware-only tests ignored.
+- **[owner]** Linux Tauri workspace compilation still needs WebKitGTK 4.1,
+  libsoup 3, and JavaScriptCoreGTK 4.1 development packages; the Windows
+  workflow's workspace check is the other app-crate compile gate.
+- **[owner]** Run the hardware checks above and complete the M0 memory
+  measurements before using these results as the M1/M0 go/no-go.
