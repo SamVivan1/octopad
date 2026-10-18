@@ -14,11 +14,13 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use octopad_core::device::protocol::{candidate_ports, parse_event_line, parse_hello};
-use octopad_core::device::serial_transport::{SerialConnection, SerialTransport, Sleeper};
+use octopad_core::device::serial_transport::{
+    SerialCommandHandle, SerialConnection, SerialTransport, Sleeper,
+};
 use octopad_core::device::{DeviceEvent, TransportKind};
 use octopad_core::serial_spike::{Hello, SerialError};
 
@@ -172,6 +174,63 @@ impl SerialConnection for ScriptedConnection {
     }
 }
 
+struct FailingWriteConnection {
+    writes: Arc<Mutex<Vec<String>>>,
+}
+
+impl SerialConnection for FailingWriteConnection {
+    fn write_line(&mut self, line: &str) -> Result<(), SerialError> {
+        self.writes.lock().unwrap().push(line.to_string());
+        Err(SerialError::Other("write failed".to_string()))
+    }
+
+    fn read_line(&mut self) -> Result<Option<String>, SerialError> {
+        std::thread::sleep(Duration::from_millis(1));
+        Ok(None)
+    }
+
+    fn close(&mut self) {}
+}
+
+struct GatedDisconnectConnection {
+    gate: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl SerialConnection for GatedDisconnectConnection {
+    fn write_line(&mut self, _line: &str) -> Result<(), SerialError> {
+        Ok(())
+    }
+
+    fn read_line(&mut self) -> Result<Option<String>, SerialError> {
+        let (lock, changed) = &*self.gate;
+        let mut disconnect = lock.lock().unwrap();
+        while !*disconnect {
+            disconnect = changed.wait(disconnect).unwrap();
+        }
+        Err(SerialError::Other("device disconnected".to_string()))
+    }
+
+    fn close(&mut self) {}
+}
+
+struct QuietConnection {
+    writes: Arc<Mutex<Vec<String>>>,
+}
+
+impl SerialConnection for QuietConnection {
+    fn write_line(&mut self, line: &str) -> Result<(), SerialError> {
+        self.writes.lock().unwrap().push(line.to_string());
+        Ok(())
+    }
+
+    fn read_line(&mut self) -> Result<Option<String>, SerialError> {
+        std::thread::sleep(Duration::from_millis(1));
+        Ok(None)
+    }
+
+    fn close(&mut self) {}
+}
+
 /// Zero-delay sleeper that records the requested durations (and the order).
 struct RecordingSleeper {
     durations: Arc<Mutex<Vec<Duration>>>,
@@ -302,6 +361,152 @@ async fn emits_connect_hello_button_and_disconnect_sequence_then_rescans() {
         .await
         .expect("the transport must stop after shutdown")
         .expect("the transport task must not panic");
+}
+
+#[tokio::test]
+async fn serial_command_reports_write_failure_instead_of_queue_acceptance() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let transport = SerialTransport::new()
+        .with_lister(|| vec!["/dev/ttyACM0".to_string()])
+        .with_prober(|_port: &str| {
+            Ok(Some(Hello {
+                name: "Pad".to_string(),
+                version: "1.2".to_string(),
+            }))
+        })
+        .with_opener({
+            let writes = writes.clone();
+            move |_port: &str| {
+                Ok(Box::new(FailingWriteConnection {
+                    writes: writes.clone(),
+                }) as Box<dyn SerialConnection>)
+            }
+        })
+        .with_sleeper(RecordingSleeper {
+            durations: Arc::new(Mutex::new(Vec::new())),
+        });
+    let command_handle: SerialCommandHandle = transport.command_handle();
+    let task = transport.spawn(tx, shutdown_rx);
+
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("serial should connect"),
+        Some(DeviceEvent::StatusChanged {
+            connected: true,
+            ..
+        })
+    ));
+
+    let sent = command_handle.send_command("NAME:Pad").await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !writes.lock().unwrap().contains(&"NAME:Pad".to_string()) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("transport should attempt the command write");
+
+    shutdown_tx.send(true).unwrap();
+    drop(rx);
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("serial should stop after shutdown")
+        .expect("transport task should not panic");
+    assert!(
+        !sent,
+        "a failed write must not be reported as a successful send"
+    );
+}
+
+#[tokio::test]
+async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let second_writes = Arc::new(Mutex::new(Vec::new()));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let transport = SerialTransport::new()
+        .with_lister(|| vec!["/dev/ttyACM0".to_string()])
+        .with_prober(|_port: &str| {
+            Ok(Some(Hello {
+                name: "Pad".to_string(),
+                version: "1.2".to_string(),
+            }))
+        })
+        .with_opener({
+            let gate = gate.clone();
+            let opens = opens.clone();
+            let second_writes = second_writes.clone();
+            move |_port: &str| {
+                if opens.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(Box::new(GatedDisconnectConnection { gate: gate.clone() })
+                        as Box<dyn SerialConnection>)
+                } else {
+                    Ok(Box::new(QuietConnection {
+                        writes: second_writes.clone(),
+                    }) as Box<dyn SerialConnection>)
+                }
+            }
+        })
+        .with_sleeper(RecordingSleeper {
+            durations: Arc::new(Mutex::new(Vec::new())),
+        });
+    let command_handle = transport.command_handle();
+    let task = transport.spawn(tx, shutdown_rx);
+
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("first connection should be established"),
+        Some(DeviceEvent::StatusChanged {
+            connected: true,
+            ..
+        })
+    ));
+
+    let mut command = Box::pin(command_handle.send_command("NAME:Stale"));
+    tokio::select! {
+        biased;
+        result = &mut command => panic!("command should wait for its session write: {result}"),
+        _ = tokio::task::yield_now() => {}
+    }
+    let (lock, changed) = &*gate;
+    *lock.lock().unwrap() = true;
+    changed.notify_one();
+
+    let command_result = tokio::time::timeout(Duration::from_secs(2), &mut command)
+        .await
+        .expect("disconnect should resolve the pending command");
+
+    let reconnect_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        assert!(tokio::time::Instant::now() < reconnect_deadline);
+        if matches!(
+            rx.recv().await,
+            Some(DeviceEvent::StatusChanged {
+                connected: true,
+                ..
+            })
+        ) {
+            break;
+        }
+    }
+    let reconnect_writes = second_writes.lock().unwrap().clone();
+
+    shutdown_tx.send(true).unwrap();
+    drop(rx);
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("serial should stop after shutdown")
+        .expect("transport task should not panic");
+    assert!(!command_result);
+    assert_eq!(
+        reconnect_writes,
+        vec!["WHO".to_string(), "TIMING:25,250,450".to_string()]
+    );
 }
 
 /// No candidate at all: sleep 2s and rescan, never busy-spin without a sleep

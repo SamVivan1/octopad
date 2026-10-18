@@ -14,7 +14,7 @@
 //! no wall-clock delays.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use btleplug::api::{
@@ -22,7 +22,7 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -103,12 +103,14 @@ impl Sleeper for TokioSleeper {
 struct Command {
     line: String,
     log: bool,
+    result: oneshot::Sender<bool>,
 }
 
 /// Thread-safe flags shared with every [`BleCommandHandle`].
 struct SharedState {
     connected: AtomicBool,
     can_write: AtomicBool,
+    command_gate: Mutex<()>,
 }
 
 /// Thread-safe command handle, obtained from [`BleTransport::command_handle`]
@@ -128,16 +130,27 @@ impl BleCommandHandle {
     /// Returns `false` when no pad is connected or it exposed no RX
     /// characteristic. With `log = true` the transport emits a
     /// `[TX-BLE] …` line once the write is attempted.
-    pub fn send_command(&self, command: &str, log: bool) -> bool {
-        if !self.is_connected() || !self.state.can_write.load(Ordering::SeqCst) {
-            return false;
-        }
-        self.commands
-            .send(Command {
-                line: command.trim().to_string(),
-                log,
-            })
-            .is_ok()
+    pub async fn send_command(&self, command: &str, log: bool) -> bool {
+        let result = {
+            let _gate = self.state.command_gate.lock().unwrap();
+            if !self.is_connected() || !self.state.can_write.load(Ordering::SeqCst) {
+                return false;
+            }
+            let (result_tx, result_rx) = oneshot::channel();
+            if self
+                .commands
+                .send(Command {
+                    line: command.trim().to_string(),
+                    log,
+                    result: result_tx,
+                })
+                .is_err()
+            {
+                return false;
+            }
+            result_rx
+        };
+        result.await.unwrap_or(false)
     }
 }
 
@@ -189,6 +202,7 @@ impl BleTransport {
             state: Arc::new(SharedState {
                 connected: AtomicBool::new(false),
                 can_write: AtomicBool::new(false),
+                command_gate: Mutex::new(()),
             }),
         }
     }
@@ -307,10 +321,13 @@ impl BleTransport {
         device_name: &mut Option<String>,
     ) -> Session {
         let address = connection.address();
-        self.state
-            .can_write
-            .store(connection.can_write(), Ordering::SeqCst);
-        self.state.connected.store(true, Ordering::SeqCst);
+        {
+            let _gate = self.state.command_gate.lock().unwrap();
+            self.state
+                .can_write
+                .store(connection.can_write(), Ordering::SeqCst);
+            self.state.connected.store(true, Ordering::SeqCst);
+        }
         send(tx, connected_event(&address)).await;
 
         // Read TX once: the pad answers `HELLO:` there. Re-read on every
@@ -340,7 +357,7 @@ impl BleTransport {
         if let Err(err) = connection.start_notify().await {
             tracing::warn!(error = %err, "BLE subscribe failed; reconnecting");
             connection.close().await;
-            self.clear_connected();
+            self.clear_connected(commands);
             send(tx, disconnected_event(&address)).await;
             return Session::Disconnected;
         }
@@ -365,8 +382,10 @@ impl BleTransport {
                 // Unreachable: the transport itself keeps a sender alive, so
                 // the channel never closes while the loop runs.
                 Step::Command(None) => {}
-                Step::Command(Some(command)) => match connection.write_line(&command.line).await {
-                    Ok(()) => {
+                Step::Command(Some(command)) => {
+                    let written = connection.write_line(&command.line).await.is_ok();
+                    let _ = command.result.send(written);
+                    if written {
                         if command.log {
                             send(
                                 tx,
@@ -379,8 +398,10 @@ impl BleTransport {
                     }
                     // Python logs the failure and keeps the link; a truly dead
                     // link surfaces through the notify stream.
-                    Err(err) => tracing::debug!(error = %err, "BLE write failed"),
-                },
+                    else {
+                        tracing::debug!("BLE write failed");
+                    }
+                }
                 Step::Notify(Ok(None)) => {}
                 Step::Notify(Ok(Some(chunk))) => {
                     pending.push_str(&String::from_utf8_lossy(&chunk));
@@ -398,7 +419,7 @@ impl BleTransport {
         connection.close().await;
         // Clear the flags before announcing the drop, so a `send_command`
         // racing the disconnect is refused.
-        self.clear_connected();
+        self.clear_connected(commands);
         if matches!(outcome, Session::Disconnected) {
             send(tx, disconnected_event(&address)).await;
         }
@@ -406,9 +427,13 @@ impl BleTransport {
     }
 
     /// Drop the shared connection flags.
-    fn clear_connected(&self) {
+    fn clear_connected(&self, commands: &mut mpsc::UnboundedReceiver<Command>) {
+        let _gate = self.state.command_gate.lock().unwrap();
         self.state.connected.store(false, Ordering::SeqCst);
         self.state.can_write.store(false, Ordering::SeqCst);
+        while let Ok(command) = commands.try_recv() {
+            let _ = command.result.send(false);
+        }
     }
 }
 

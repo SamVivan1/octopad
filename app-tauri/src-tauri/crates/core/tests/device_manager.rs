@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +13,7 @@ use tokio::task::JoinHandle;
 struct FakeTransport {
     connected: Arc<AtomicBool>,
     commands: Arc<Mutex<Vec<String>>>,
+    failing_command: Option<String>,
     events: Vec<DeviceEvent>,
 }
 
@@ -19,8 +22,14 @@ impl FakeTransport {
         Self {
             connected: Arc::new(AtomicBool::new(connected)),
             commands: Arc::new(Mutex::new(Vec::new())),
+            failing_command: None,
             events,
         }
+    }
+
+    fn with_failing_command(mut self, command: &str) -> Self {
+        self.failing_command = Some(command.to_string());
+        self
     }
 
     fn commands(&self) -> Vec<String> {
@@ -29,12 +38,17 @@ impl FakeTransport {
 }
 
 impl DeviceTransport for FakeTransport {
-    fn send_command(&self, command: &str) -> bool {
-        if !self.connected.load(Ordering::SeqCst) {
-            return false;
-        }
-        self.commands.lock().unwrap().push(command.to_string());
-        true
+    fn send_command<'a>(
+        &'a self,
+        command: &'a str,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            if !self.connected.load(Ordering::SeqCst) {
+                return false;
+            }
+            self.commands.lock().unwrap().push(command.to_string());
+            self.failing_command.as_deref() != Some(command)
+        })
     }
 
     fn spawn(
@@ -132,7 +146,7 @@ async fn send_command_prefers_serial_and_logs_only_when_requested() {
 
     wait_for_statuses(&mut running.events, true, true).await;
     wait_for_command_count(&serial, 1).await;
-    assert!(running.manager.send_command("X", true));
+    assert!(running.manager.send_command("X", true).await);
     assert_eq!(serial.commands(), vec!["TIMING:25,250,450", "X"]);
     assert!(ble.commands().is_empty());
     assert_eq!(
@@ -142,7 +156,7 @@ async fn send_command_prefers_serial_and_logs_only_when_requested() {
         })
     );
 
-    assert!(running.manager.send_command("Y", false));
+    assert!(running.manager.send_command("Y", false).await);
     assert_eq!(serial.commands(), vec!["TIMING:25,250,450", "X", "Y"]);
     assert!(running.events.try_recv().is_err());
     stop_manager(running).await;
@@ -163,8 +177,28 @@ async fn send_command_falls_back_to_ble_when_serial_is_disconnected() {
             observed_status += 1;
         }
     }
-    assert!(running.manager.send_command("X", true));
+    assert!(running.manager.send_command("X", true).await);
     assert!(serial.commands().is_empty());
+    assert_eq!(ble.commands(), vec!["X"]);
+    assert_eq!(
+        running.events.recv().await,
+        Some(DeviceEvent::Log {
+            line: "[TX-BLE] X".to_string()
+        })
+    );
+    stop_manager(running).await;
+}
+
+#[tokio::test]
+async fn send_command_falls_back_to_ble_when_serial_write_fails() {
+    let serial = FakeTransport::new(true, vec![status(TransportKind::Serial, true)])
+        .with_failing_command("X");
+    let ble = FakeTransport::new(true, vec![status(TransportKind::Ble, true)]);
+    let mut running = start_manager(serial.clone(), ble.clone());
+
+    wait_for_statuses(&mut running.events, true, true).await;
+    assert!(running.manager.send_command("X", true).await);
+    assert_eq!(serial.commands(), vec!["TIMING:25,250,450", "X"]);
     assert_eq!(ble.commands(), vec!["X"]);
     assert_eq!(
         running.events.recv().await,
@@ -181,7 +215,7 @@ async fn send_command_returns_false_when_neither_transport_is_connected() {
     let ble = FakeTransport::new(false, vec![status(TransportKind::Ble, false)]);
     let running = start_manager(serial.clone(), ble.clone());
 
-    assert!(!running.manager.send_command("X", true));
+    assert!(!running.manager.send_command("X", true).await);
     assert!(serial.commands().is_empty());
     assert!(ble.commands().is_empty());
     stop_manager(running).await;
@@ -204,7 +238,7 @@ async fn sync_timings_routes_without_logging_and_rejects_invalid_config() {
         }
     }
     wait_for_command_count(&serial, 1).await;
-    assert!(running.manager.sync_timings(&config));
+    assert!(running.manager.sync_timings(&config).await);
     assert_eq!(
         serial.commands(),
         vec!["TIMING:25,250,450", "TIMING:25,250,450"]
@@ -213,7 +247,7 @@ async fn sync_timings_routes_without_logging_and_rejects_invalid_config() {
     assert!(running.events.try_recv().is_err());
 
     config.debounce_ms = serde_json::Value::String("not-a-number".to_string());
-    assert!(!running.manager.sync_timings(&config));
+    assert!(!running.manager.sync_timings(&config).await);
     assert_eq!(serial.commands().len(), 2);
     stop_manager(running).await;
 }
@@ -226,12 +260,17 @@ async fn rename_device_strips_whitespace_and_rejects_invalid_names() {
 
     wait_for_statuses(&mut running.events, true, false).await;
     wait_for_command_count(&serial, 1).await;
-    assert!(!running.manager.rename_device(""));
-    assert!(!running.manager.rename_device("   "));
-    assert!(!running.manager.rename_device("1234567890123456789012345"));
+    assert!(!running.manager.rename_device("").await);
+    assert!(!running.manager.rename_device("   ").await);
+    assert!(
+        !running
+            .manager
+            .rename_device("1234567890123456789012345")
+            .await
+    );
     assert_eq!(serial.commands(), vec!["TIMING:25,250,450"]);
 
-    assert!(running.manager.rename_device("  My Pad  "));
+    assert!(running.manager.rename_device("  My Pad  ").await);
     assert_eq!(serial.commands(), vec!["TIMING:25,250,450", "NAME:My Pad"]);
     assert_eq!(
         running.events.recv().await,

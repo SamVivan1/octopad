@@ -30,13 +30,13 @@ pub fn list_presets_cmd(state: State<'_, Arc<AppState>>) -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn rename_device_cmd(
+pub async fn rename_device_cmd(
     name: String,
     state: State<'_, Arc<AppState>>,
     manager: State<'_, DeviceManager>,
 ) -> bool {
     let name = name.trim();
-    if !manager.rename_device(name) {
+    if !manager.rename_device(name).await {
         return false;
     }
     state.set_device_name(Some(name.to_string()));
