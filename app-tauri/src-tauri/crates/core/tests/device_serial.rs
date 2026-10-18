@@ -661,8 +661,12 @@ fn m0_serial_spike_paths_still_resolve() {
     let hello = octopad_core::serial_spike::parse_hello("HELLO:OCTOPAD:Pad:v1")
         .expect("the M0 path must keep parsing");
     assert_eq!(hello.name, "Pad");
+    #[cfg(not(target_os = "windows"))]
+    let candidate = "/dev/ttyUSB0";
+    #[cfg(target_os = "windows")]
+    let candidate = "COM3";
     assert!(
-        octopad_core::serial_spike::candidate_ports(vec!["/dev/ttyUSB0".to_string()])
-            .contains(&"/dev/ttyUSB0".to_string())
+        octopad_core::serial_spike::candidate_ports(vec![candidate.to_string()])
+            .contains(&candidate.to_string())
     );
 }
