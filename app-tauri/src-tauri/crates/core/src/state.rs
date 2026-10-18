@@ -307,6 +307,11 @@ impl AppState {
         }
     }
 
+    /// Publish a serial-console line to every event subscriber.
+    pub fn log(&self, line: impl Into<String>) {
+        self.dispatch(vec![AppEvent::SerialLog { line: line.into() }]);
+    }
+
     // -- read-only views ----------------------------------------------------
 
     /// Copy of the working configuration.
