@@ -12,6 +12,7 @@ export interface Action {
 }
 
 export type TriggerName = 'single' | 'double' | 'hold';
+export type TimingField = 'debounceMs' | 'clickTimeoutMs' | 'holdTimeoutMs';
 
 export type ActionSlot = Action | Action[] | JsonValue;
 
