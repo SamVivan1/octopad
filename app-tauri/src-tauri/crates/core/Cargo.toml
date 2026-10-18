@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-serial = ["serialport"]
+serial = ["serialport", "tokio"]
 ble = ["btleplug", "tokio"]
 
 [dependencies]
@@ -14,7 +14,7 @@ tracing = "0.1"
 dirs = "6"
 serialport = { version = "4", optional = true }
 btleplug = { version = "0.11", optional = true }
-tokio = { version = "1", features = ["rt", "time", "macros"], optional = true }
+tokio = { version = "1", features = ["sync", "rt", "time", "macros"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

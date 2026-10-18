@@ -1,5 +1,6 @@
 pub mod config;
 pub mod config_paths;
+pub mod device;
 pub mod platform;
 pub mod proto;
 pub mod state;
