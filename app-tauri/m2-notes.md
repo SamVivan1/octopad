@@ -31,7 +31,7 @@ Do not treat the UI unit tests as a substitute for these platform checks. Hardwa
 
 The Windows workflow now runs frontend tests, type-checking, and a frontend build after `npm ci` and before the Rust checks and Tauri bundle build. Its existing artifact-upload step still requires both NSIS (`.exe`) and MSI (`.msi`) outputs.
 
-### Locally verified
+### Verified locally and in Windows CI
 
 - Workflow YAML parses successfully.
 - `npm ci` completed successfully.
@@ -40,9 +40,10 @@ The Windows workflow now runs frontend tests, type-checking, and a frontend buil
 - Frontend production build: passed.
 - Rust formatting check: passed.
 - Core tests with `serial,ble`: 200 passed, 3 hardware-dependent tests ignored, 0 failed.
+- Windows CI passed on commit `c3800be` (PR #10), including `cargo check --workspace` and the NSIS/MSI bundle build.
+- CI uploaded the `octopad-tauri-windows-bundle` artifact. See [the successful workflow run](https://github.com/SamVivan1/octopad/actions/runs/39176711919).
 
-### Pending external verification
+### Remaining owner verification
 
 - `cargo check --workspace` cannot complete on this Linux host because the Tauri WebKitGTK dependencies `libsoup-3.0`, `javascriptcoregtk-4.1`, and `webkit2gtk-4.1` are unavailable.
-- The Windows workflow was not run: this branch does not exist on the remote, and pushing or opening a PR to trigger external CI was not authorized. No NSIS/MSI artifact has been confirmed.
 - Windows install/UI/tray/single-instance acceptance and the Linux tray/autostart/hide-on-close smoke checks remain owner gates.
