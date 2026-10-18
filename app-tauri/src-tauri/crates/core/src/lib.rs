@@ -1,9 +1,12 @@
+pub mod config_paths;
 pub mod platform;
 pub mod proto;
-pub mod config_paths;
 
 #[cfg(feature = "ble")]
 pub mod ble_spike;
+
+#[cfg(feature = "serial")]
+pub mod serial_spike;
 
 #[cfg(feature = "serial")]
 pub use platform::list_ports;
