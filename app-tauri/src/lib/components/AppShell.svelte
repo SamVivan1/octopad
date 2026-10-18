@@ -4,6 +4,7 @@
   import StatusHeader from './StatusHeader.svelte';
   import ButtonsPage from '../pages/ButtonsPage.svelte';
   import ProfilesPage from '../pages/ProfilesPage.svelte';
+  import SettingsPage from '../pages/SettingsPage.svelte';
   import { initializeAppState } from '../state';
 
   type PageId = 'Buttons' | 'Serial Console' | 'Profiles' | 'Settings';
@@ -57,10 +58,7 @@
       {:else if activePage === 'Profiles'}
         <ProfilesPage />
       {:else}
-        <section aria-labelledby="settings-title">
-          <h1 id="settings-title">Settings</h1>
-          <p class="page-placeholder">Connection and timing preferences.</p>
-        </section>
+        <SettingsPage />
       {/if}
     </main>
   </div>
@@ -87,10 +85,6 @@
   h1 {
     margin: 0 0 var(--space-4);
     font-size: 1.5rem;
-  }
-
-  .page-placeholder {
-    color: var(--text-muted);
   }
 
   .startup-error {
