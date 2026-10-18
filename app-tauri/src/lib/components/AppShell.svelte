@@ -3,6 +3,7 @@
   import Sidebar from './Sidebar.svelte';
   import StatusHeader from './StatusHeader.svelte';
   import ButtonsPage from '../pages/ButtonsPage.svelte';
+  import ConsolePage from '../pages/ConsolePage.svelte';
   import ProfilesPage from '../pages/ProfilesPage.svelte';
   import SettingsPage from '../pages/SettingsPage.svelte';
   import { initializeAppState } from '../state';
@@ -51,10 +52,7 @@
       {#if activePage === 'Buttons'}
         <ButtonsPage />
       {:else if activePage === 'Serial Console'}
-        <section aria-labelledby="console-title">
-          <h1 id="console-title">Serial Console</h1>
-          <p class="page-placeholder">Device messages will appear here.</p>
-        </section>
+        <ConsolePage />
       {:else if activePage === 'Profiles'}
         <ProfilesPage />
       {:else}
@@ -80,11 +78,6 @@
   .page-content {
     min-width: 0;
     padding: var(--space-6);
-  }
-
-  h1 {
-    margin: 0 0 var(--space-4);
-    font-size: 1.5rem;
   }
 
   .startup-error {
