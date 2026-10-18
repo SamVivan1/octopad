@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::config::{import_legacy, ConfigStore, ImportError, ImportReport};
+use crate::config::{load_legacy_config, ConfigStore, ImportError, ImportReport};
 use crate::config_paths::legacy_config_dir;
 use crate::device::manager::DeviceManager;
 use crate::device::{DeviceEvent, TransportKind};
@@ -72,8 +72,8 @@ pub fn run_import_from_legacy_dir(
     store: &ConfigStore,
     legacy_dir: &Path,
 ) -> Result<ImportReport, ImportError> {
-    let report = import_legacy(store, legacy_dir)?;
-    state.set_config(store.load_config(), "import");
+    let (config, report) = load_legacy_config(store, legacy_dir)?;
+    state.set_config(config, "import");
     Ok(report)
 }
 

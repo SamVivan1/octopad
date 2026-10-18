@@ -990,7 +990,17 @@ fn actions_of(button: &Button, trigger: &str) -> Vec<Action> {
 
 /// Write a trigger slot back, reusing the shared `TriggerActions` shape helpers.
 fn set_actions(button: &mut Button, trigger: &str, actions: Vec<Action>) {
-    let slot = TriggerActions::from_list(actions);
+    let preserve_list_shape = match trigger {
+        "single" => matches!(&button.single, TriggerActions::Many(_)),
+        "double" => matches!(&button.double, TriggerActions::Many(_)),
+        "hold" => matches!(&button.hold, TriggerActions::Many(_)),
+        _ => false,
+    };
+    let slot = if preserve_list_shape {
+        TriggerActions::Many(actions)
+    } else {
+        TriggerActions::from_list(actions)
+    };
     match trigger {
         "single" => button.single = slot,
         "double" => button.double = slot,

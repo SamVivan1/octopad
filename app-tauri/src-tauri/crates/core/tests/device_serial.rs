@@ -494,6 +494,13 @@ async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
             break;
         }
     }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while second_writes.lock().unwrap().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("reconnected session should write its startup commands");
     let reconnect_writes = second_writes.lock().unwrap().clone();
 
     shutdown_tx.send(true).unwrap();

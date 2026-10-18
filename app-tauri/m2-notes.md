@@ -8,7 +8,7 @@
 - Frontend type-check: passed with 0 errors and 0 warnings.
 - Frontend production build: passed.
 - Rust formatting check: passed.
-- Core tests with `serial,ble`: 199 passed, 3 hardware-dependent tests ignored, 0 failed.
+- Core tests with `serial,ble`: 200 passed, 3 hardware-dependent tests ignored, 0 failed.
 - Tauri application compilation is blocked on this Linux host by missing `javascriptcoregtk-4.1`, `libsoup-3.0`, and `webkit2gtk-4.1` development packages. The app crate has not been type-checked here.
 - A Windows-target cross-check was also blocked because `x86_64-w64-mingw32-windres` is not installed.
 
@@ -39,7 +39,7 @@ The Windows workflow now runs frontend tests, type-checking, and a frontend buil
 - Frontend type-check: passed with 0 errors and 0 warnings.
 - Frontend production build: passed.
 - Rust formatting check: passed.
-- Core tests with `serial,ble`: 199 passed, 3 hardware-dependent tests ignored, 0 failed.
+- Core tests with `serial,ble`: 200 passed, 3 hardware-dependent tests ignored, 0 failed.
 
 ### Pending external verification
 

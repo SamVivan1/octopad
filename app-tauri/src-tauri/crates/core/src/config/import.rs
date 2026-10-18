@@ -5,9 +5,11 @@
 //!
 //! * reads `<legacy_dir>/config.json`, validates it with
 //!   [`normalize_config`](super::normalize_config) and migrates it;
-//! * **replaces** the new store's config via a temp file + atomic rename, so a
-//!   corrupt legacy file (or a crash mid-write) can never leave a half-written
-//!   or partially-imported config behind;
+//! * provides both a persisted importer and an in-memory loader for the UI's
+//!   explicit import flow, which must wait for the user's Save action;
+//! * the persisted importer replaces the new store's config via a temp file +
+//!   atomic rename, so a corrupt legacy file (or a crash mid-write) can never
+//!   leave a half-written or partially-imported config behind;
 //! * copies `<legacy_dir>/presets/*.json` into the new presets directory,
 //!   overwriting the same slug and reporting any preset that could not be read
 //!   as a warning.
@@ -82,7 +84,7 @@ impl std::error::Error for ImportError {}
 /// What a legacy import did (serialized to the UI by the Tauri command).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportReport {
-    /// True when the new store's config was replaced by the legacy config.
+    /// True when the legacy config was successfully imported into the app.
     pub imported_config: bool,
     /// Slugs of the legacy presets copied into the new store (sorted, unique).
     pub presets: Vec<String>,
@@ -111,6 +113,27 @@ impl ImportReport {
 /// Errors leave the new store exactly as it was — validation happens before any
 /// write, and the config itself is replaced atomically (temp file + rename).
 pub fn import_legacy(store: &ConfigStore, legacy_dir: &Path) -> Result<ImportReport, ImportError> {
+    let config = read_legacy_config(legacy_dir)?;
+    write_config_atomic(store, &config)?;
+
+    Ok(import_report(store, legacy_dir))
+}
+
+/// Load a legacy config into memory for the interactive UI import flow.
+///
+/// Unlike [`import_legacy`], this does not replace the saved config; the
+/// caller applies the returned config to its working state and waits for an
+/// explicit Save. Legacy presets are still copied into the store.
+pub fn load_legacy_config(
+    store: &ConfigStore,
+    legacy_dir: &Path,
+) -> Result<(Config, ImportReport), ImportError> {
+    let config = read_legacy_config(legacy_dir)?;
+    let report = import_report(store, legacy_dir);
+    Ok((config, report))
+}
+
+fn read_legacy_config(legacy_dir: &Path) -> Result<Config, ImportError> {
     let legacy_file = legacy_dir.join("config.json");
     if !legacy_file.is_file() {
         return Err(ImportError::NotFound);
@@ -128,18 +151,19 @@ pub fn import_legacy(store: &ConfigStore, legacy_dir: &Path) -> Result<ImportRep
 
     let mut config = super::store::config_from_value(&stored);
     migrate_config(&mut config);
+    Ok(config)
+}
 
-    write_config_atomic(store, &config)?;
-
+fn import_report(store: &ConfigStore, legacy_dir: &Path) -> ImportReport {
     let mut warnings = Vec::new();
     let presets = copy_legacy_presets(store, legacy_dir, &mut warnings);
 
-    Ok(ImportReport {
+    ImportReport {
         imported_config: true,
         presets,
         warnings,
         first_run_auto: false,
-    })
+    }
 }
 
 /// The once-per-first-run auto-import: imports only when the new app's config
