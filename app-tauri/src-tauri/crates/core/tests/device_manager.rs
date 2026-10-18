@@ -297,3 +297,31 @@ async fn pushes_default_timings_after_serial_connect_status() {
     assert_eq!(serial.commands(), vec!["TIMING:25,250,450"]);
     stop_manager(running).await;
 }
+
+#[tokio::test]
+async fn closes_transports_when_the_merged_event_receiver_is_dropped() {
+    let serial = FakeTransport::new(
+        false,
+        vec![DeviceEvent::Log {
+            line: "serial".to_string(),
+        }],
+    );
+    let ble = FakeTransport::new(
+        false,
+        vec![DeviceEvent::Log {
+            line: "ble".to_string(),
+        }],
+    );
+    let manager = DeviceManager::with_transports(Arc::new(serial), Arc::new(ble));
+    let (event_tx, events) = mpsc::channel(8);
+    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+    let task = manager.spawn(event_tx, shutdown_rx);
+    drop(events);
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), task)
+            .await
+            .is_ok(),
+        "manager must stop its transports when the event consumer closes"
+    );
+}

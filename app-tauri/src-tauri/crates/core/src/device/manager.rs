@@ -98,15 +98,16 @@ impl DeviceManager {
 
         self.serial_connected.store(false, Ordering::SeqCst);
         self.ble_connected.store(false, Ordering::SeqCst);
-        let serial_task = self.serial.spawn(serial_tx, shutdown.clone());
-        let ble_task = self.ble.spawn(ble_tx, shutdown.clone());
+        let (transport_shutdown_tx, transport_shutdown_rx) = watch::channel(false);
+        let serial_task = self.serial.spawn(serial_tx, transport_shutdown_rx.clone());
+        let ble_task = self.ble.spawn(ble_tx, transport_shutdown_rx);
 
         tokio::spawn(async move {
             let mut shutdown = shutdown;
             let mut serial_open = true;
             let mut ble_open = true;
 
-            while !*shutdown.borrow() {
+            while !*shutdown.borrow() && (serial_open || ble_open) {
                 tokio::select! {
                     changed = shutdown.changed() => {
                         let _ = changed;
@@ -144,6 +145,7 @@ impl DeviceManager {
                 }
             }
 
+            let _ = transport_shutdown_tx.send(true);
             let _ = serial_task.await;
             let _ = ble_task.await;
         })
