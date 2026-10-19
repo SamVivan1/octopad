@@ -45,7 +45,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: app-tauri/package-lock.json
 
@@ -117,7 +117,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: app-tauri/package-lock.json
 
@@ -140,7 +140,8 @@ jobs:
       - name: Verify the .deb installs and its dependencies resolve
         working-directory: app-tauri
         run: |
-          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb)
+          # Absolute path: apt reads a bare relative path as a package name.
+          DEB=$(readlink -f "$(ls src-tauri/target/release/bundle/deb/*.deb)")
           echo "--- declared dependencies ---"
           dpkg-deb -I "$DEB" | grep -E '^ (Package|Depends|Installed-Size)'
           echo "--- every dependency available in Debian 12? ---"
@@ -159,9 +160,9 @@ jobs:
             fi
           done
           test "$MISSING" -eq 0
-          echo "--- install and launch smoke check ---"
+          echo "--- install smoke check ---"
           apt-get install -y "$DEB"
-          command -v octo-pad || command -v octopad-tauri || ls /usr/bin | grep -i octo
+          dpkg -l octo-pad | tail -1
           echo "package installed cleanly on Debian 12"
 
   windows:
@@ -184,7 +185,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: app-tauri/package-lock.json
 
