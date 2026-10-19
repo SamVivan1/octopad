@@ -444,7 +444,10 @@
     const min = spec_.min ?? -Infinity;
     const max = spec_.max ?? Infinity;
     const clamped = Math.min(max, Math.max(min, parsed));
-    commit(withField(action, spec_.name, clamped));
+    // A number input accepts any typed precision, but the delay moves in
+    // 0.1 steps: round to that so `3.14159` is stored as `3.1` rather than
+    // being saved at a precision the control can never show again.
+    commit(withField(action, spec_.name, Math.round(clamped * 10) / 10));
   }
 
   function commitJson(name: string, label: string, raw: string): void {
@@ -453,11 +456,18 @@
       return;
     }
     try {
-      commit(withField(action, name, JSON.parse(raw)));
+      const value: unknown = JSON.parse(raw);
+      // The core forwards this verbatim as the Home Assistant service payload,
+      // which must be a JSON object. An array, string, number or null parses
+      // fine but would be rejected by Home Assistant, so reject it here.
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error('not a JSON object');
+      }
+      commit(withField(action, name, value));
     } catch {
       // Never send a half-typed object: an invalid command would be a failed
       // edit, and a silently dropped field is worse than a visible message.
-      fieldError = `${label} must be valid JSON.`;
+      fieldError = `${label} must be a valid JSON object.`;
     }
   }
 

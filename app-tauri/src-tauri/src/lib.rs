@@ -10,9 +10,12 @@
 //!   and Quit.
 //! - **A second launch never starts a second runtime.** The single-instance
 //!   plugin is registered first in the builder chain and asks the resident
-//!   instance to show and focus its window.
+//!   instance to show and focus its window — unless the second launch carries
+//!   `--hidden`, which is an autostart re-fire and must not steal focus.
 //! - **`--hidden` starts in the tray.** That is the argument the autostart login
-//!   entry carries, so an autostart launch never flashes a window.
+//!   entry carries. The window is configured `visible: false` and only shown
+//!   from `setup` when the argument is absent, so an autostart launch never
+//!   maps — and therefore never flashes — a window.
 
 mod commands;
 
@@ -204,10 +207,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         // Registered first, before every other plugin: a second launch must be
         // intercepted before anything else initialises a second runtime.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            // The resident instance already owns the device connections, so the
-            // second launch only asks for the window back.
-            show_main_window(app);
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // An autostart re-fire carries `--hidden` as well: it must not pull
+            // the resident app's window back out of the tray.
+            if !argv.iter().any(|argument| argument == HIDDEN_ARG) {
+                // The resident instance already owns the device connections, so
+                // the second launch only asks for the window back.
+                show_main_window(app);
+            }
         }))
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -262,11 +269,13 @@ pub fn run() {
                 bridge::connect_device_events(state.clone(), device_rx);
             });
 
-            // Autostart (`--hidden`): the window exists so the runtime and the
-            // tray do, but nothing is shown until Open is used.
-            if std::env::args().any(|argument| argument == HIDDEN_ARG) {
+            // The window is configured `visible: false`, so it is created (the
+            // runtime and the tray need it) but never mapped before this point.
+            // Show it here only for a normal launch; an autostart `--hidden`
+            // launch leaves it unmapped until Open is used.
+            if !std::env::args().any(|argument| argument == HIDDEN_ARG) {
                 if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                    let _ = window.hide();
+                    let _ = window.show();
                 }
             }
             Ok(())

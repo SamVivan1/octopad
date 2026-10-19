@@ -687,6 +687,25 @@ describe('action field editors', () => {
     ]);
   });
 
+  it('rejects malformed Home Assistant service data without changing the action', async () => {
+    withSingleSlot([{ type: 'home_assistant', entityId: 'light.hall', data: {} }]);
+    await renderEditor();
+
+    // Parseable JSON that is not a JSON object is still malformed for
+    // `service.data`: the core sends it verbatim as the service call payload.
+    for (const raw of ['[1, 2]', '"str"', '42', 'null']) {
+      await setField('single', 0, 'data', raw);
+      await flush();
+
+      expect(setActionCalls('set_action_cmd'), `accepted ${raw}`).toEqual([]);
+      const error = actionCards('single')[0].querySelector('[data-testid="action-field-error"]');
+      expect(error?.textContent, `no error for ${raw}`).toMatch(/json object/i);
+      expect(currentSnapshot.config.modes[0].buttons[0].single).toEqual([
+        { type: 'home_assistant', entityId: 'light.hall', data: {} },
+      ]);
+    }
+  });
+
   it('edits the webhook URL', async () => {
     withSingleSlot([{ type: 'ha_webhook', url: '' }]);
     await renderEditor();
@@ -715,6 +734,12 @@ describe('action field editors', () => {
 
     expect((await lastSetAction()).action).toEqual({ type: 'delay', seconds: 2.5 });
     expect((field('single', 0, 'seconds') as HTMLInputElement).value).toBe('2.5');
+
+    // A number input accepts more precision than the 0.1 step; it is rounded.
+    await setField('single', 0, 'seconds', '3.14159');
+    await flush();
+
+    expect((await lastSetAction()).action).toEqual({ type: 'delay', seconds: 3.1 });
   });
 });
 
