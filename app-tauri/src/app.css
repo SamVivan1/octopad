@@ -1,0 +1,76 @@
+:root {
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  color: #eeeaf7;
+  background: #121018;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  --surface-base: #121018;
+  --surface-raised: #1b1823;
+  --surface-hover: #272232;
+  --surface-key: #211d2b;
+  --border: #383244;
+  --text: #eeeaf7;
+  --text-muted: #aaa2b8;
+  --accent: #b592ff;
+  --accent-strong: #9166e8;
+  --success: #6bd3a5;
+  --warning: #f2c66d;
+  --error: #ff858b;
+  --focus-ring: #d3baff;
+  --trigger-single: #6bd3a5;
+  --trigger-double: #7eb7ff;
+  --trigger-hold: #f2c66d;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --radius-sm: 0.35rem;
+  --radius-md: 0.65rem;
+  --radius-lg: 1rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--surface-base);
+  color: var(--text);
+}
+
+button,
+input,
+textarea,
+select {
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
