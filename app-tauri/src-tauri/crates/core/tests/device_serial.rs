@@ -729,8 +729,15 @@ fn m0_serial_spike_paths_still_resolve() {
     let hello = octopad_core::serial_spike::parse_hello("HELLO:OCTOPAD:Pad:v1")
         .expect("the M0 path must keep parsing");
     assert_eq!(hello.name, "Pad");
+    // `candidate_ports` filters per platform (Linux keeps ttyUSB/ttyACM, Windows
+    // keeps COM ports), so the sample has to match the host we run on.
+    let sample = if cfg!(target_os = "windows") {
+        "COM7"
+    } else {
+        "/dev/ttyUSB0"
+    };
     assert!(
-        octopad_core::serial_spike::candidate_ports(vec!["/dev/ttyUSB0".to_string()])
-            .contains(&"/dev/ttyUSB0".to_string())
+        octopad_core::serial_spike::candidate_ports(vec![sample.to_string()])
+            .contains(&sample.to_string())
     );
 }
