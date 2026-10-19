@@ -45,9 +45,17 @@
     busy = true;
     feedback = null;
     const saved = await runCommand('save configuration', () => api.saveConfig());
-    feedback = saved
-      ? { tone: 'ok', text: `Configuration saved to ${configPath || 'the config file'}.` }
-      : { tone: 'error', text: get(lastError) ?? 'The configuration could not be saved.' };
+    if (saved) {
+      // Re-read so the path, the preset and the dirty flag are exactly what the
+      // core holds after the write, not what the UI assumed it would be.
+      await refreshAppState();
+      feedback = { tone: 'ok', text: `Configuration saved to ${configPath || 'the config file'}.` };
+    } else {
+      feedback = {
+        tone: 'error',
+        text: get(lastError) ?? 'The configuration could not be saved.',
+      };
+    }
     busy = false;
   }
 
@@ -72,9 +80,19 @@
 
     if (imported && captured.report) {
       // The core already emitted `config-replaced`; re-read anyway so the page
-      // shows the imported working copy even if the event was coalesced.
+      // shows the imported working copy even if the event was coalesced. No
+      // save happens here: an import never writes the config file.
       await refreshAppState();
       feedback = describeImport(captured.report);
+    } else {
+      // A failed import leaves the working copy exactly as it was, so the
+      // message must say what did not happen as well as what did.
+      feedback = {
+        tone: 'error',
+        text:
+          get(lastError) ??
+          'The legacy configuration could not be imported, so the working copy is unchanged.',
+      };
     }
     busy = false;
   }

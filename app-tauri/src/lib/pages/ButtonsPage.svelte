@@ -20,6 +20,7 @@
   import KeyGrid from '../components/KeyGrid.svelte';
   import ModeSwitch from '../components/ModeSwitch.svelte';
   import * as api from '../api';
+  import { runEdit as enqueueEdit } from '../editQueue';
   import { appState, runCommand } from '../state';
 
   const snapshot = $derived($appState);
@@ -36,30 +37,16 @@
   const selectedLabel = $derived(selectedButton?.label?.trim() || 'Unlabelled');
 
   // -- the command queue -------------------------------------------------------
-
-  /** Tail of the command chain; every command runs after the previous one. */
-  let queue: Promise<unknown> = Promise.resolve();
-
-  /**
-   * Run `task` once every previously queued command has settled. A failed
-   * command never breaks the chain — the next one still runs — so one rejected
-   * selection cannot freeze the page.
-   */
-  function enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const next = queue.then(task, task);
-    queue = next.then(
-      () => undefined,
-      () => undefined
-    );
-    return next;
-  }
+  //
+  // One app-wide queue, shared with every other page (see `../editQueue`), so a
+  // command issued here can never overtake an edit another page already queued.
 
   async function selectKey(index: number): Promise<void> {
-    await enqueue(() => runCommand(`select key ${index + 1}`, () => api.selectButton(index)));
+    await enqueueEdit(() => runCommand(`select key ${index + 1}`, () => api.selectButton(index)));
   }
 
   async function selectMode(index: number): Promise<void> {
-    await enqueue(() => runCommand('switch mode', () => api.setMode(index)));
+    await enqueueEdit(() => runCommand('switch mode', () => api.setMode(index)));
   }
 
   /**
@@ -70,12 +57,12 @@
    * user triggered a moment earlier.
    */
   export async function runEdit<T>(command: () => Promise<T>): Promise<T> {
-    return enqueue(command);
+    return enqueueEdit(command);
   }
 
   /** Rename the key on screen, through the same queue as every other edit. */
   async function renameKey(text: string): Promise<void> {
-    await enqueue(() => runCommand('set the key label', () => api.setLabel(text)));
+    await enqueueEdit(() => runCommand('set the key label', () => api.setLabel(text)));
   }
 </script>
 

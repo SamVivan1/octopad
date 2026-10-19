@@ -23,6 +23,7 @@ import { writable } from 'svelte/store';
 import type { Readable, Writable } from 'svelte/store';
 
 import * as api from './api';
+import { resetEditQueue } from './editQueue';
 import type { AppEventPayloads, AppSnapshot, TimingField } from './types';
 
 /** Newest log lines kept in memory; older lines are dropped on append. */
@@ -391,6 +392,7 @@ export function resetAppState(): void {
   lastError.set(null);
   nextLogId = 0;
   refreshChain = Promise.resolve();
+  resetEditQueue();
 }
 
 /** Read-only aliases for components that only need to consume state. */
