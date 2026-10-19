@@ -158,6 +158,19 @@ function cardNumbers(): string[] {
   return cards().map((card) => within(card).getByTestId('key-card-number').textContent?.trim() ?? '');
 }
 
+/** The two-column region: the key grid left, the action inspector right. */
+function splitRegion(): HTMLElement {
+  return screen.getByTestId('buttons-layout');
+}
+
+function splitColumn(name: string): HTMLElement {
+  const column = splitRegion().querySelector<HTMLElement>(`[data-column="${name}"]`);
+  if (!column) {
+    throw new Error(`the split region has no "${name}" column`);
+  }
+  return column;
+}
+
 function selectedCardKeys(): string[] {
   return cards()
     .filter((card) => card.getAttribute('aria-pressed') === 'true')
@@ -267,6 +280,59 @@ describe('key grid', () => {
     const share = /min\((\d+)%/.exec(style.getPropertyValue('--key-grid-min-track'));
     expect(share, 'minimum track is a share of the container').not.toBeNull();
     expect(Number(share?.[1]) * minColumns).toBeLessThanOrEqual(100);
+  });
+});
+
+// -- the two-column region ---------------------------------------------------
+
+describe('two-column layout', () => {
+  it('puts the key grid left of the action inspector, both on screen at once', async () => {
+    await renderPage();
+
+    const region = splitRegion();
+    const gridColumn = splitColumn('grid');
+    const inspectorColumn = splitColumn('inspector');
+    const grid = screen.getByTestId('key-grid');
+    const inspector = screen.getByTestId('buttons-inspector');
+
+    // Both panels exist together inside the split region — M2 stacked them, and
+    // the owner ran the app to find it.
+    expect(region.contains(grid), 'the grid is inside the split region').toBe(true);
+    expect(region.contains(inspector), 'the inspector is inside the split region').toBe(true);
+    expect(gridColumn.contains(grid), 'the grid fills the left column').toBe(true);
+    expect(inspectorColumn.contains(inspector), 'the inspector fills the right column').toBe(true);
+
+    // Reading order is the intended layout order: buttons first, actions second.
+    expect(
+      grid.compareDocumentPosition(inspector) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the grid precedes the inspector in the DOM'
+    ).toBeTruthy();
+    expect(
+      gridColumn.compareDocumentPosition(inspectorColumn) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the grid column precedes the inspector column'
+    ).toBeTruthy();
+  });
+
+  it('declares the two-column intent as data, driven by the shell layout tokens', async () => {
+    await renderPage();
+
+    const region = splitRegion();
+
+    // The contract is published as data so it is testable without asserting
+    // pixels, which jsdom cannot compute.
+    expect(region.getAttribute('data-layout')).toBe('split');
+    expect(region.getAttribute('data-columns')).toBe('2');
+    expect(region.getAttribute('data-collapse-below')).toBe('900px');
+
+    // Widths, gap and the per-column scroll bound all come from `app.css`, so
+    // the region cannot drift into a second styling system.
+    const style = region.style;
+    expect(style.getPropertyValue('--split-grid')).toBe('var(--shell-split-grid)');
+    expect(style.getPropertyValue('--split-inspector')).toBe('var(--shell-split-inspector)');
+    expect(style.getPropertyValue('--split-gap')).toBe('var(--shell-split-gap)');
+    expect(style.getPropertyValue('--split-column-height')).toBe(
+      'var(--shell-split-column-height)'
+    );
   });
 });
 

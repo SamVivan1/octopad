@@ -86,6 +86,26 @@
   --sidebar-width: 200px;
   --header-height: 52px;
   --shell-gap: var(--space-4);
+  --shell-page-max: 960px;
+
+  /*
+   * Split regions (M3 Phase 1) — the Buttons page's two-column region: the key
+   * grid on the left, the action inspector on the right, each column scrolling
+   * on its own so a long action list never stretches the grid.
+   *
+   * `--shell-split-grid` / `--shell-split-inspector` are the two grid tracks,
+   * `--shell-split-column-height` bounds each column so it scrolls instead of
+   * growing, and `--shell-split-breakpoint` is where the region collapses to a
+   * single column. Media queries cannot read a custom property, so the
+   * breakpoint is repeated as a literal in the page's `@media (max-width: …)`
+   * rule — keep the two in step.
+   */
+  --shell-split-page-max: 1180px;
+  --shell-split-gap: var(--space-5);
+  --shell-split-grid: minmax(0, 1.1fr);
+  --shell-split-inspector: minmax(320px, 0.9fr);
+  --shell-split-column-height: 520px;
+  --shell-split-breakpoint: 900px;
 }
 
 *,
@@ -149,7 +169,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  max-width: 960px;
+  max-width: var(--shell-page-max);
 }
 
 .page__title {
