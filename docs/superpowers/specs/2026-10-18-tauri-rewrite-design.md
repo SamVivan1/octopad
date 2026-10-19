@@ -87,8 +87,17 @@ Chosen by the owner through Q&A:
   deferred.
 - Platform floor: Windows 10+ x64; Linux distributions shipping
   webkit2gtk-4.1 (Ubuntu 22.04+, recent Fedora).
-- Verification: a Windows CI artifact is produced after every milestone and
-  dogfooded by the owner; no fixed release deadline.
+- **Platform priority (decided 2026-10-19): Linux first.** Ubuntu is the
+  reference distribution and the wider Linux ecosystem is the main audience;
+  Debian-derived systems are called out explicitly because most installs live
+  there. Windows keeps full feature parity and a CI artifact per milestone, but
+  it is priority 2. In practice this sets where verification effort goes: the
+  `linux` CI job (Ubuntu, builds `.deb` + AppImage) and the `debian` container
+  job (proves the `.deb` installs on Debian 12) come before the `windows` job,
+  and a Linux packaging regression blocks a release before a Windows one.
+- Verification: a CI artifact is produced after every milestone — Linux
+  bundles plus the Windows installer — and dogfooded by the owner; no fixed
+  release deadline.
 - Incremental per-module strategy; `app-tauri/` lives in this repo.
 
 Builder's calls (adjustable if a better option appears during implementation):
