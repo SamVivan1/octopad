@@ -19,6 +19,11 @@
 
 pub mod runner;
 
+/// Linux keyboard/text/media injection. Windows gets its own module in a later
+/// task; every other target falls back to [`NoInputInjector`].
+#[cfg(target_os = "linux")]
+pub mod input_linux;
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -27,6 +32,9 @@ use serde_json::Value;
 use crate::config::model::Action;
 
 pub use runner::{CommandCall, RealCommandRunner, RecordingRunner};
+
+#[cfg(target_os = "linux")]
+pub use input_linux::{InputTool, LinuxInjector};
 
 /// Result of one action: the verdict plus the exact console text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +125,21 @@ impl InputInjector for NoInputInjector {
     fn media(&self, _media_key: &str) -> ActionOutcome {
         ActionOutcome::fail(INPUT_INJECTOR_HELP)
     }
+}
+
+/// The injector this platform should use: the Linux tool chain when one of
+/// wtype/ydotool/xdotool is installed, and the honest [`NoInputInjector`] when
+/// it is not (so a missing tool is a visible failure, never a silent success).
+///
+/// Borrows the runner, because that is how it detects and runs the tool.
+pub fn platform_input_injector<'a>(runner: &'a dyn CommandRunner) -> Box<dyn InputInjector + 'a> {
+    #[cfg(target_os = "linux")]
+    if let Some(injector) = input_linux::LinuxInjector::detect(runner) {
+        return Box::new(injector);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = runner;
+    Box::new(NoInputInjector)
 }
 
 /// Pauses an action chain (`time.sleep`).
@@ -461,5 +484,19 @@ mod tests {
         deps.sleeper.sleep(-1.0);
         deps.sleeper.sleep(f64::NAN);
         deps.sleeper.sleep(f64::INFINITY);
+    }
+
+    #[test]
+    fn the_platform_injector_reports_a_missing_tool_instead_of_pretending() {
+        let installed = RecordingRunner::new(ActionOutcome::ok("/usr/bin/wtype"));
+        assert_eq!(
+            platform_input_injector(&installed).available().as_deref(),
+            Some("wtype")
+        );
+        let missing = RecordingRunner::new(ActionOutcome::fail("not found"));
+        let injector = platform_input_injector(&missing);
+        assert!(injector.available().is_none());
+        assert_eq!(injector.text("hi").reason, INPUT_INJECTOR_HELP);
+        assert!(!injector.text("hi").ok);
     }
 }
