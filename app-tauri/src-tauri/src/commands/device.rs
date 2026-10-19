@@ -13,7 +13,7 @@ use octopad_core::config::{Action, ImportError, ImportReport};
 use octopad_core::device::manager::DeviceManager;
 use octopad_core::state::AppState;
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 // -- snapshot / config lifecycle ---------------------------------------------
 
@@ -28,11 +28,20 @@ pub fn import_legacy_config(state: State<'_, Arc<AppState>>) -> Result<ImportRep
 }
 
 /// Persist the working config, then best-effort sync timings to the pad.
+///
+/// Async commands cannot take `State<'_, _>`: the generated future must be
+/// `'static`, and Tauri additionally requires a `Result` from async commands
+/// that receive borrowed arguments. Passing an owned `AppHandle` and resolving
+/// the managed state inside the body satisfies both rules while keeping the
+/// command body a thin delegation.
 #[tauri::command]
-pub async fn save_config_cmd(
-    state: State<'_, Arc<AppState>>,
-    manager: State<'_, DeviceManager>,
-) -> bool {
+pub async fn save_config_cmd(app: AppHandle) -> bool {
+    let Some(state) = app.try_state::<Arc<AppState>>() else {
+        return false;
+    };
+    let Some(manager) = app.try_state::<DeviceManager>() else {
+        return false;
+    };
     bridge::save_config(state.inner().as_ref(), manager.inner()).await
 }
 
@@ -106,17 +115,20 @@ pub fn set_timing_cmd(field: String, value: i64, state: State<'_, Arc<AppState>>
 // -- device ------------------------------------------------------------------
 
 /// Rename the pad; `false` (and no name change) when the name is rejected or
-/// the transport write fails.
+/// the transport write fails. Takes an owned `AppHandle` for the same reason
+/// as [`save_config_cmd`].
 #[tauri::command]
-pub async fn rename_device_cmd(
-    name: String,
-    state: State<'_, Arc<AppState>>,
-    manager: State<'_, DeviceManager>,
-) -> bool {
+pub async fn rename_device_cmd(name: String, app: AppHandle) -> bool {
     let name = name.trim();
+    let Some(manager) = app.try_state::<DeviceManager>() else {
+        return false;
+    };
     if !manager.rename_device(name).await {
         return false;
     }
+    let Some(state) = app.try_state::<Arc<AppState>>() else {
+        return false;
+    };
     state.set_device_name(Some(name.to_string()));
     true
 }
@@ -124,6 +136,9 @@ pub async fn rename_device_cmd(
 /// Send a raw console command; `true` only once a transport reports a
 /// successful write.
 #[tauri::command]
-pub async fn send_device_command_cmd(command: String, manager: State<'_, DeviceManager>) -> bool {
+pub async fn send_device_command_cmd(command: String, app: AppHandle) -> bool {
+    let Some(manager) = app.try_state::<DeviceManager>() else {
+        return false;
+    };
     manager.send_command(&command, true).await
 }
