@@ -516,7 +516,9 @@ pub fn run() {
             commands::device::remove_action_cmd,
             commands::device::move_action_cmd,
             commands::device::set_timing_cmd,
-            commands::device::send_device_command_cmd
+            commands::device::send_device_command_cmd,
+            commands::device::test_action_cmd,
+            commands::device::test_trigger_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

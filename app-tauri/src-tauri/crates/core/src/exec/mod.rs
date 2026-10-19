@@ -23,6 +23,11 @@ pub mod runner;
 /// (`linux-app/serial_listener.py:70`).
 pub mod chain;
 
+/// The editor's test runner: one action or a whole trigger on demand (the
+/// Test buttons, M3.2). Reuses the chain's resolution and console formatting —
+/// never a second formatter.
+pub mod test_runner;
+
 /// The ten built-in presets (`linux-app/system_actions.py:16`). Always
 /// compiled: the ids and the tool order are the same everywhere.
 pub mod system;
@@ -43,6 +48,7 @@ pub mod input_windows;
 use std::collections::HashMap;
 use std::fmt;
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::config::model::Action;
@@ -54,6 +60,8 @@ pub use chain::{
     SharedSleeper,
 };
 
+pub use test_runner::{spawn_test_action, spawn_test_trigger};
+
 pub use system::{execute_system_preset, preset_by_id, SystemPreset, SYSTEM_PRESETS};
 
 #[cfg(target_os = "linux")]
@@ -63,7 +71,7 @@ pub use input_linux::{InputTool, LinuxInjector};
 pub use input_windows::WindowsInjector;
 
 /// Result of one action: the verdict plus the exact console text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActionOutcome {
     pub ok: bool,
     pub reason: String,

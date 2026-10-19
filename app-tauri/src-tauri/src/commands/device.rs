@@ -11,6 +11,7 @@ use std::sync::Arc;
 use octopad_core::bridge;
 use octopad_core::config::{Action, ImportError, ImportReport};
 use octopad_core::device::manager::DeviceManager;
+use octopad_core::exec::{self, ActionOutcome};
 use octopad_core::state::AppState;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
@@ -141,4 +142,38 @@ pub async fn send_device_command_cmd(command: String, app: AppHandle) -> bool {
         return false;
     };
     manager.send_command(&command, true).await
+}
+
+// -- test runner -------------------------------------------------------------
+
+/// Run one action from the editor's Test button exactly as its real button
+/// would run it: on a blocking task with production wiring, so a long `delay`
+/// never freezes the UI. Returns the outcome for the UI to show (a toast);
+/// nothing is logged, since no button exists a console line could name.
+#[tauri::command]
+pub async fn test_action_cmd(action: Action, app: AppHandle) -> ActionOutcome {
+    let Some(state) = app.try_state::<Arc<AppState>>() else {
+        return ActionOutcome::fail("App state is not available");
+    };
+    exec::spawn_test_action(state.inner().clone(), action)
+        .await
+        .unwrap_or_else(|error| ActionOutcome::fail(format!("Test runner failed: {error}")))
+}
+
+/// Run a whole trigger slot from the editor's "test all" button: the editor's
+/// current mode resolves like a real press and the console gets the same pair
+/// per action with the `test` trigger label. One outcome per non-`none`
+/// action, a mid-chain failure included.
+#[tauri::command]
+pub async fn test_trigger_cmd(
+    button_index: usize,
+    trigger: String,
+    app: AppHandle,
+) -> Vec<ActionOutcome> {
+    let Some(state) = app.try_state::<Arc<AppState>>() else {
+        return vec![ActionOutcome::fail("App state is not available")];
+    };
+    exec::spawn_test_trigger(state.inner().clone(), button_index, &trigger)
+        .await
+        .unwrap_or_else(|error| vec![ActionOutcome::fail(format!("Test runner failed: {error}"))])
 }

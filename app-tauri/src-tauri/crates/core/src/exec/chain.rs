@@ -32,7 +32,10 @@ use tokio::task::JoinHandle;
 use crate::config::Action;
 use crate::state::{actions_of, AppState};
 
-use super::{execute_action, CommandRunner, ExecDeps, InputInjector, RealCommandRunner, Sleeper};
+use super::{
+    execute_action, ActionOutcome, CommandRunner, ExecDeps, InputInjector, RealCommandRunner,
+    Sleeper,
+};
 
 /// A `'static` command runner, so the blocking task can own it.
 pub type SharedCommandRunner = Arc<dyn CommandRunner + Send + Sync>;
@@ -141,36 +144,42 @@ pub fn spawn_trigger_chain(
     button_index: i64,
     trigger: &str,
 ) -> JoinHandle<()> {
+    // The task outlives this call, so it cannot borrow the caller's strings.
+    let mode = mode.to_string();
+    let trigger = trigger.to_string();
+    tokio::task::spawn_blocking(move || {
+        run_trigger_chain(deps, &mode, button_index, &trigger, &trigger);
+    })
+}
+
+/// Resolve and run, entirely off the caller's thread.
+///
+/// Returns the outcome of every dispatched action in order, so the test
+/// runner can hand them to the UI; `spawn_trigger_chain` discards them, a real
+/// press only ever talks through the console.
+///
+/// `trigger` selects the slot (`single` / `double` / `hold`); `label` is the
+/// console label printed by the two lines (the slot name for a press, `test`
+/// for the editor's test run).
+pub(crate) fn run_trigger_chain(
+    deps: ChainDeps,
+    mode: &str,
+    button_index: i64,
+    trigger: &str,
+    label: &str,
+) -> Vec<ActionOutcome> {
     let ChainDeps {
         state,
         runner,
         input,
         sleeper,
     } = deps;
-    // The task outlives this call, so it cannot borrow the caller's strings.
-    let mode = mode.to_string();
-    let trigger = trigger.to_string();
-    tokio::task::spawn_blocking(move || {
-        run_trigger_chain(state, runner, input, sleeper, &mode, button_index, &trigger)
-    })
-}
-
-/// Resolve and run, entirely off the caller's thread.
-fn run_trigger_chain(
-    state: Arc<AppState>,
-    runner: SharedCommandRunner,
-    input: Option<SharedInputInjector>,
-    sleeper: SharedSleeper,
-    mode: &str,
-    button_index: i64,
-    trigger: &str,
-) {
     let Some(actions) = resolve_actions(&state, mode, button_index, trigger) else {
-        return;
+        return Vec::new();
     };
     // Nothing to do: no log line and, on the production path, no `which` probe.
     if actions.iter().all(is_skipped) {
-        return;
+        return Vec::new();
     }
     let runner: &dyn CommandRunner = &*runner;
     let sleeper: &dyn Sleeper = &*sleeper;
@@ -182,7 +191,7 @@ fn run_trigger_chain(
             &*input,
             sleeper,
             button_index,
-            trigger,
+            label,
         ),
         None => execute_chain_with_platform_input(
             &state,
@@ -190,13 +199,14 @@ fn run_trigger_chain(
             runner,
             sleeper,
             button_index,
-            trigger,
+            label,
         ),
     }
 }
 
 /// The chain body: one log pair per action, in order, never aborted by a
-/// failure.
+/// failure. Returns the outcome of every dispatched action (chain tests and
+/// the editor's test runner read them; a real press ignores them).
 fn execute_chain(
     state: &AppState,
     actions: &[Action],
@@ -205,9 +215,10 @@ fn execute_chain(
     sleeper: &dyn Sleeper,
     button_index: i64,
     trigger: &str,
-) {
+) -> Vec<ActionOutcome> {
     let deps = ExecDeps::with_sleeper(runner, input, sleeper);
     let number = button_index.saturating_add(1);
+    let mut outcomes = Vec::new();
     for action in actions {
         if is_skipped(action) {
             continue;
@@ -225,7 +236,9 @@ fn execute_chain(
             outcome.reason,
             outcome.verdict()
         ));
+        outcomes.push(outcome);
     }
+    outcomes
 }
 
 /// Detect the platform injector (wtype → ydotool → xdotool) for this run.
@@ -240,7 +253,7 @@ fn execute_chain_with_platform_input(
     sleeper: &dyn Sleeper,
     button_index: i64,
     trigger: &str,
-) {
+) -> Vec<ActionOutcome> {
     match super::input_linux::LinuxInjector::detect(runner) {
         Some(injector) => execute_chain(
             state,
@@ -273,7 +286,7 @@ fn execute_chain_with_platform_input(
     sleeper: &dyn Sleeper,
     button_index: i64,
     trigger: &str,
-) {
+) -> Vec<ActionOutcome> {
     execute_chain(
         state,
         actions,
