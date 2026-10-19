@@ -598,3 +598,20 @@ fn outcome_display_carries_the_verdict() {
         "Empty text [FAIL]"
     );
 }
+
+// `ha_service` is the legacy alias both Python apps route to the Home Assistant
+// branch. Without this arm an old config using the alias would be reported as an
+// unknown action type rather than as "not available yet", which reads like a
+// corrupt config instead of an unfinished feature.
+#[test]
+fn legacy_ha_service_alias_is_reported_as_pending_not_unknown() {
+    let runner = RecordingRunner::new(ActionOutcome::ok("ran"));
+    let deps = ExecDeps::new(&runner, &NoInputInjector);
+    let action = Action {
+        action_type: "ha_service".to_string(),
+        extra: Default::default(),
+    };
+    let outcome = execute_action(&action, &deps);
+    assert!(!outcome.ok, "ha_service must not claim success before M3.2");
+    assert_eq!(outcome.reason, "Not available until M3.2: ha_service");
+}

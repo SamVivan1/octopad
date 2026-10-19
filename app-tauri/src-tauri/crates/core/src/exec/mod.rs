@@ -242,9 +242,13 @@ fn dispatch(action: &Action, deps: &ExecDeps<'_>) -> Result<ActionOutcome, Strin
             string_field(extra, "presetId", "")?
         ))),
         // M3.2 types: visible failures, never a silent success.
-        "audio_output" | "launch_app" | "home_assistant" | "ha_webhook" => Ok(ActionOutcome::fail(
-            format!("Not available until M3.2: {action_type}"),
-        )),
+        // `ha_service` is the legacy alias both Python apps route to the Home
+        // Assistant branch (`elif action_type in ['home_assistant', 'ha_service']`),
+        // so it belongs here too — otherwise an old config using that alias would
+        // report "unknown action type" instead of "not yet available".
+        "audio_output" | "launch_app" | "home_assistant" | "ha_service" | "ha_webhook" => Ok(
+            ActionOutcome::fail(format!("Not available until M3.2: {action_type}")),
+        ),
         other => Ok(ActionOutcome::fail(format!("Unknown action type: {other}"))),
     }
 }
