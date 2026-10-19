@@ -521,6 +521,11 @@ mod tests {
         deps.sleeper.sleep(f64::INFINITY);
     }
 
+    // Linux-only contract: with no keyboard-injection tool installed, the
+    // platform injector must admit it and show the help text. On Windows the
+    // injector is SendInput and always available, so this does not apply there —
+    // Windows gets its own contract below (executed by the Windows CI job).
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_platform_injector_reports_a_missing_tool_instead_of_pretending() {
         let installed = RecordingRunner::new(ActionOutcome::ok("/usr/bin/wtype"));
@@ -532,6 +537,20 @@ mod tests {
         let injector = platform_input_injector(&missing);
         assert!(injector.available().is_none());
         assert_eq!(injector.text("hi").reason, INPUT_INJECTOR_HELP);
-        assert!(!injector.text("hi").ok);
+        assert_eq!(
+            injector.shortcut(&["ctrl".into()], "t").reason,
+            INPUT_INJECTOR_HELP
+        );
+        assert_eq!(injector.media("PLAY_PAUSE").reason, INPUT_INJECTOR_HELP);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn the_windows_injector_never_reports_a_missing_tool() {
+        let runner = RecordingRunner::new(ActionOutcome::fail("unused on windows"));
+        assert_eq!(
+            platform_input_injector(&runner).available().as_deref(),
+            Some("SendInput")
+        );
     }
 }
