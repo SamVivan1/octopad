@@ -30,9 +30,18 @@ commands behind `commands::` with thin bodies:
 
 - `test_action_cmd(action)` — runs one action off the UI thread
   (`tokio::task::spawn_blocking`), returns `ActionOutcome { ok, reason }`.
-- `test_trigger_cmd(trigger)` — runs every non-`none` action of the selected
-  button's trigger, in list order, same result shape (list of outcomes). A
-  failing action must not stop the rest, exactly like the real chain.
+- `test_trigger_cmd(buttonIndex, trigger)` — runs every non-`none` action of
+  that button's trigger, in list order, same result shape (list of outcomes). A
+  failing action must not stop the rest, exactly like the real chain. The
+  frontend passes the selected button's index because the console format needs
+  it.
+
+Console visibility: both commands log through the core (`state.log`) so the
+existing `octopad://serial-log` pipeline and the M3.1 classifier render them
+unchanged — the per-action preamble line
+`Executing action for Button {n} ({trigger}) -> Type: {type}` and the result
+line `[ACTION] B{n} ({TRIGGER}): {reason} [OK|FAIL]`, with the trigger label
+replaced by `TEST`.
 
 UI (parity with `linux-app/ui/action_editor.py`):
 
@@ -81,6 +90,16 @@ files, and semantics*).
 - **Save** persists credentials, clears the entity cache when the URL changed,
   and emits `octopad://ha-status-changed`
   (`{configured, url, connected, message, cached}`).
+- **The saved token is never sent to the webview.** `ha_get_settings_cmd`
+  returns the URL and a `tokenSaved` flag, so the token input shows empty with
+  a "token saved" placeholder (owner decision, 2026-10-19). An empty token
+  field always means "use the saved token" for Test and Save; the field's
+  content is sent only when typed.
+- **Desktop notifications: failures only** (owner decision, 2026-10-19). The
+  Python app notified via `notify-send` on every success and failure; the new
+  app keeps that notification only when a service call *fails* (including
+  "not configured" and unreachable HA). Success needs no popup — the console
+  line and the Test toast already carry it.
 - Status line always visible: not configured / connected / last message —
   never a made-up state (the page's existing truth rules).
 
@@ -97,32 +116,81 @@ The Home Assistant action becomes pick-driven, replacing free text:
   `{friendly_name} ({entity_id})`.
 - The choice writes `entityId`; `domain` is derived from `entity_id` at
   execution time (Python: `domain = entity_id.split('.')[0]` when empty).
-- **Service select** per domain from `INTERACTIVE_SERVICES` (defaults to
-  `toggle`). Manual service text stays available for anything the table lacks.
+- **Service select is domain-aware: the default comes from
+  `DEFAULT_SERVICE_OVERRIDES`** (Python `home_assistant.py:142` — automation
+  → `trigger`, button/input_button → `press`, scene/script → `turn_on`,
+  media_player → `play_pause`, lock → `lock`, vacuum → `start`, timer →
+  `start`, update → `install`, alarm_control_panel → `disarm`), not a blanket
+  `toggle`; every other domain defaults to `toggle`. The scanned entity row
+  therefore carries `services` and `default_service` like Python's
+  `decorate_entities` does, and the picker uses them.
+- A config whose `service` is empty keeps that on disk until the picker
+  resolves it; at execution time an empty service means Python's failure
+  (`Home Assistant domain or service not set`), and the select *displays* the
+  domain's default once the domain is known.
 - **Rescan** button (`data-testid="ha-rescan"`) lives on the action card —
   forced live scan, not the throttled one; nothing is typed here.
+- **Opening an HA action card asks the core for a throttled background scan**
+  (cache-first, `TIMEOUT_SCAN_BG`, 30 s retry guard) — this is the one
+  non-forced scan trigger, matching the Python action editor. Rendering an
+  already-scanned card stays instant from the cache and emits
+  `octopad://ha-entities-changed` with it.
+- **The HA client is a managed singleton in the Tauri app state**, like
+  Python's module-level `ha_client`: one client, one throttle clock, one
+  cache — so real button-press executions and UI scans share the same rules.
+  `ExecDeps` gains the client handle alongside runner/input/sleeper, and the
+  dispatcher's `home_assistant` arm uses it.
 - Not-configured state: the picker is rendered but disabled with the HA
   settings link ("configure Home Assistant in Settings") — selecting an entity
   without credentials cannot pretend to work.
 - Config keys unchanged (`domain`, `service`, `entityId`), so a config written
   by the Python app keeps working, including `ha_service`.
 
+## 3a. `ha_webhook` is implemented too (owner decision, 2026-10-19)
+
+Leaving it stubbed would make the "Not available until M3.2" message lie as
+soon as M3.2 ships. Port the Python branch (`system_actions.py:420-442`):
+`POST {url}` with `data` (or `{}`), `Content-Type: application/json`, 4 s
+timeout, `Webhook sent to Home Assistant (HTTP {n})` and the existing empty-URL
+failure string. Config keys stay whatever the JSON hand-editing held (`url`,
+`data`); no new UI — the webhook stays a console/hand-edit tool.
+
 ## 4. Application and audio-output pickers
 
 New core command surface, Linux first:
 
 - `list_applications_cmd` → emits `octopad://apps-changed` with
-  `{id, name}` entries from `*.desktop` lookup across
-  `$XDG_DATA_HOME`, `~/.local/share`, `/usr/share`, and both Flatpak export
-  dirs; `NoDisplay`/`Hidden`/`TryExec`-missing entries are skipped. Sorted by
-  `name.to_lowercase()`; duplicate ids deduplicated with first-wins (XDG
-  precedence order).
-- `list_audio_outputs_cmd` → `{name, description}` (from `pactl list short
-  sinks` — PipeWire's pipewire-pulse serves the same list; `wpctl` has no
-  stable machine-readable listing).
+  `{id, name}` entries from `*.desktop` files found in `$XDG_DATA_DIRS` (each
+  `share/applications`), `$XDG_DATA_HOME`/`~/.local/share/applications`, and
+  the Flatpak and Snap export trees
+  (`/var/lib/flatpak/exports/share/applications`,
+  `~/.local/share/flatpak/exports/share/applications`,
+  `/var/lib/snapd/desktop/applications`) — superset of
+  `linux-app/app_scanner.py`, which skipped Snap; the owner's Ubuntu
+  reference machine ships snap apps and must not lose them (builder-check
+  question 8). `Type` must be `Application` with a `Name`; `NoDisplay=true` /
+  `Hidden=true` entries are skipped. Sorted by `name.to_lowercase()`;
+  duplicate ids deduplicated with first-wins in XDG precedence order.
+- `list_audio_outputs_cmd` → `{name, description}` via
+  **`pactl -f json list sinks`** with a plain-text fallback — Python
+  `system_actions.py:273` (`system_actions.py`). `pactl list short` has no
+  description field, so the doc's earlier draft was wrong (builder-check
+  question 2). Returns the list in the command response.
 - Both scans run off the UI thread on demand and after each Rescan; the
   frontend caches the last list per page session (no background polling —
   startup must stay fast).
+
+**Execution of `audio_output` is `pactl`-parity** — the doc draft's
+`wpctl set-default` was wrong (builder-check question 1, verified against
+`system_actions.py:319-359`):
+
+- current default: `pactl get-default-sink`;
+- switch: `pactl set-default-sink {name}` → `Default output set to {name}`;
+  without pactl: `pactl is required to switch the audio output`;
+- **playing streams move with the switch** (Python `_move_streams_to_sink`:
+  `pactl move-sink-input {id} {sink}` for every stream, so currently playing
+  audio follows, exactly like the app did);
+- no sink selected: `No audio output selected`.
 
 **UI in `ActionFields`** (replacing the current placeholders whose hints
 already promise "the picker arrives in M3"):
@@ -136,9 +204,8 @@ already promise "the picker arrives in M3"):
   outputs (name + description), cycled in the checked order; "Manual…" adds a
   free-text sink name entry for anything the scan missed.
 - Execution parity keeps `sinks` / desktopId semantics from the Python app;
-  `audio_output` execution moves from the M3.2-stub arm to a real
-  implementation in `exec/` (`wpctl set-default` / failure strings pinned to
-  `windows-app`/`linux-app` behaviour — the Linux app switched via `wpctl set-default {sink}`).
+  `audio_output` execution moves from the M3.2-stub arm to the pactl
+  implementation above.
 
 ## 5. The cross button (UX bug)
 
