@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod config;
 pub mod config_paths;
 pub mod device;
+pub mod exec;
 pub mod platform;
 pub mod proto;
 pub mod state;
