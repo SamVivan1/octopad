@@ -15,6 +15,9 @@
  * - Log lines from the shared layer render with a timestamp and a colour class.
  * - Classification separates the manager's TX record, lines the pad itself
  *   produced, and errors.
+ * - An executed action is reported honestly: `[ACTION] … [FAIL]` is an error
+ *   line, `[OK]` and the `Executing action for …` line are not, and a failure in
+ *   the middle of a chain neither hides nor reorders the actions around it.
  * - The quick commands are exactly `WHO`, `INFO`, `SAVE`, `HELP`, each sent
  *   verbatim.
  * - Enter sends what was typed; a **failed** write shows an error and keeps the
@@ -288,6 +291,57 @@ describe('live log', () => {
     await flush();
 
     expect(lineTexts()).toEqual(['first', 'second', 'third']);
+  });
+});
+
+// -- action execution --------------------------------------------------------
+
+describe('action execution', () => {
+  // The exact strings `exec::chain` emits for one `shortcut` action on key 1.
+  const EXECUTING = 'Executing action for Button 1 (single) -> Type: shortcut';
+  const OK = '[ACTION] B1 (SINGLE): Shortcut sent [OK]';
+  const FAIL = '[ACTION] B1 (SINGLE): Shortcut sent [FAIL]';
+
+  it('renders a failed action as an error and a delivered one as a normal line', async () => {
+    await renderConsole();
+
+    const lines = [EXECUTING, OK, FAIL];
+    for (const line of lines) emitLog(line);
+    await flush();
+
+    expect(kindsOf(lines)).toEqual(['system', 'system', 'error']);
+
+    const byText = new Map(renderedLines().map((node) => [node.getAttribute('data-line'), node]));
+    expect(byText.get(FAIL)?.className).toContain('console-log__line--error');
+    // An action that worked is not a failure, and announcing the action is not
+    // one either: only the outcome decides.
+    expect(byText.get(OK)?.className).not.toContain('console-log__line--error');
+    expect(byText.get(EXECUTING)?.className).not.toContain('console-log__line--error');
+  });
+
+  it('keeps a failing action in the middle of a chain visible and in order', async () => {
+    await renderConsole();
+
+    // A chain that failed on its second action. The third action still ran, which
+    // is what the console has to show rather than a truncated sequence.
+    const lines = [
+      'Executing action for Button 2 (single) -> Type: shortcut',
+      '[ACTION] B2 (SINGLE): Shortcut sent [OK]',
+      '[ACTION] B2 (SINGLE): Shortcut sent [FAIL]',
+      'Executing action for Button 2 (single) -> Type: text',
+      '[ACTION] B2 (SINGLE): Text typed [OK]',
+    ];
+    for (const line of lines) emitLog(line);
+    await flush();
+
+    expect(lineTexts()).toEqual(lines);
+    expect(kindsOf(lines)).toEqual(['system', 'system', 'error', 'system', 'system']);
+
+    await fireEvent.click(screen.getByTestId('console-clear'));
+    await flush();
+
+    expect(renderedLines()).toHaveLength(0);
+    expect(screen.getByTestId('console-empty')).toBeDefined();
   });
 });
 

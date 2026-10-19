@@ -7,7 +7,8 @@
    *   a command reached the pad; the console never adds a line of its own.
    * - `device` — a line the pad itself produced: a documented reply
    *   (`HELLO:…`, `INFO:…`, `MODE: …`) or a button press.
-   * - `error` — a failure the core reported (`[ERROR] …`, `[BLE FAIL] …`).
+   * - `error` — a failure the core reported (`[ERROR] …`, `[BLE FAIL] …`, or an
+   *   action that ended in `[FAIL]`).
    * - `system` — anything else, i.e. host-side chatter.
    */
   export type ConsoleLineKind = 'tx' | 'device' | 'error' | 'system';
@@ -31,6 +32,16 @@
   const TX_RECORD = /^\[TX(?:-BLE)?]/i;
 
   /**
+   * The outcome of one executed action, as `exec::chain` logs it:
+   * `[ACTION] B<k> (<TRIGGER>): <reason> [OK|FAIL]`.
+   *
+   * The trailing `[FAIL]` is bracketed, so the loose `' FAIL]'` test below — the
+   * one that catches `[BLE FAIL] …` — cannot see it. Matched in full, group 1
+   * being the outcome, so an action that failed is never rendered as chatter.
+   */
+  const ACTION_OUTCOME = /^\[ACTION]\s+B\d+\s+\([A-Z]+\):.*\[(OK|FAIL)]$/i;
+
+  /**
    * Classify one line for display.
    *
    * Errors win over everything else so a failure can never be rendered as an
@@ -38,6 +49,12 @@
    * because `[TX-BLE] INFO` is a write, not an `INFO:` reply.
    */
   export function classifyLogLine(line: string): ConsoleLineKind {
+    // An action reports its own outcome, so it is classified by that outcome and
+    // not by the text of the reason: `[OK]` is an ordinary line, `[FAIL]` a
+    // failure, whatever the reason happens to contain.
+    const action = ACTION_OUTCOME.exec(line);
+    if (action) return action[1]?.toUpperCase() === 'FAIL' ? 'error' : 'system';
+
     const upper = line.toUpperCase();
     if (upper.includes('[ERROR') || upper.includes(' FAIL]')) {
       return 'error';
