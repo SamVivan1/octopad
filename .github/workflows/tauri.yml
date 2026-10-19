@@ -1,15 +1,15 @@
-name: Tauri M0
+name: Tauri Build & Test
 
 on:
   push:
     branches: [ main ]
     paths:
       - 'app-tauri/**'
-      - '.github/workflows/tauri-m0.yml'
+      - '.github/workflows/tauri.yml'
   pull_request:
     paths:
       - 'app-tauri/**'
-      - '.github/workflows/tauri-m0.yml'
+      - '.github/workflows/tauri.yml'
   workflow_dispatch:
 
 permissions:
@@ -42,6 +42,18 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      # The frontend suite is the only guard for the Svelte layer: without
+      # these steps a broken UI would still produce a green "artifact ready"
+      # run, because cargo never touches src/.
+      - name: Frontend tests (vitest)
+        run: npm test
+
+      - name: Frontend type-check (svelte-check)
+        run: npm run check
+
+      - name: Frontend build (vite)
+        run: npm run build
 
       - name: Run core tests (with device features)
         run: cargo test -p octopad-core --manifest-path src-tauri/Cargo.toml --features serial,ble
