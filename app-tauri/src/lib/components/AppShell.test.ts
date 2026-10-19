@@ -26,6 +26,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 import App from '../../App.svelte';
 import AppShell from './AppShell.svelte';
 import { resetAppState } from '../state';
+import { resetToasts } from '../toast';
 import type { AppSnapshot, Button } from '../types';
 
 // -- fixtures ----------------------------------------------------------------
@@ -136,6 +137,7 @@ beforeEach(() => {
   currentSnapshot = makeSnapshot();
   invokeMock.mockReset();
   listenMock.mockReset();
+  resetToasts();
   invokeMock.mockImplementation((command: string) => invokeDefault(command));
   listenMock.mockImplementation(async (name: string, handler: (event: { payload: unknown }) => void) => {
     const unlisten = vi.fn();
@@ -149,6 +151,65 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   resetAppState();
+  resetToasts();
+});
+
+// -- toast host --------------------------------------------------------------
+
+describe('toast host', () => {
+  it('renders a successful action test as a green status toast', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_state_snapshot') {
+        return Promise.resolve(structuredClone(currentSnapshot));
+      }
+      if (command === 'list_presets_cmd') return Promise.resolve([]);
+      if (command === 'test_action_cmd') {
+        return Promise.resolve({ ok: true, reason: 'F1 sent' });
+      }
+      return Promise.resolve(true);
+    });
+
+    render(AppShell);
+    await flush();
+
+    // The host is mounted by the shell from the start, but shows nothing
+    // before anything was reported.
+    const host = screen.getByTestId('toast-host');
+    expect(host.getAttribute('role')).toBe('status');
+    expect(within(host).queryByTestId('toast')).toBeNull();
+
+    // The default fixture configures every trigger with `{ type: 'none' }`, so
+    // the first card in the inspector is where a test can be launched.
+    await fireEvent.click(screen.getAllByTestId('action-test')[0]);
+    await flush();
+
+    const toast = within(host).getByTestId('toast');
+    expect(toast.getAttribute('data-kind')).toBe('success');
+    expect(toast.textContent).toMatch(/Test: F1 sent/);
+  });
+
+  it('renders a failing action test as a red toast in the same host', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_state_snapshot') {
+        return Promise.resolve(structuredClone(currentSnapshot));
+      }
+      if (command === 'list_presets_cmd') return Promise.resolve([]);
+      if (command === 'test_action_cmd') {
+        return Promise.resolve({ ok: false, reason: 'no serial connection' });
+      }
+      return Promise.resolve(true);
+    });
+
+    render(AppShell);
+    await flush();
+
+    await fireEvent.click(screen.getAllByTestId('action-test')[0]);
+    await flush();
+
+    const toast = screen.getByTestId('toast');
+    expect(toast.getAttribute('data-kind')).toBe('error');
+    expect(toast.textContent).toMatch(/Test: no serial connection/);
+  });
 });
 
 // -- tests -------------------------------------------------------------------

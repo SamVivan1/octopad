@@ -26,7 +26,9 @@
  *   list slot stays a list; the editor never re-shapes either.
  * - Add / remove / reorder with the core's "always keep one action" rule.
  * - Failures surface and are never reported as successful edits.
- * - Nothing executes: no action is ever sent to the device in M2.
+ * - M3 execution: the per-card `Test` button and the trigger-level `Test all`
+ *   button run actions for real, outside the edit queue, and report through
+ *   `toasts` (`Test: {reason}`); a failed invoke goes to `lastError` instead.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +45,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 import ButtonsPage from '../pages/ButtonsPage.svelte';
 import { appState, initializeAppState, lastError, resetAppState } from '../state';
+import { resetToasts, toasts } from '../toast';
 import type { Action, AppSnapshot, Button, Mode, Trigger, TriggerSlot } from '../types';
 
 // -- fixtures ----------------------------------------------------------------
@@ -264,6 +267,21 @@ function fakeCore(command: string, args: Record<string, unknown> = {}): unknown 
       return Promise.resolve(true);
     }
 
+    // M3: execution. The core runs the *stored* action(s) and reports per
+    // action — `none` slots are skipped, exactly as the old app filtered them.
+    case 'test_action_cmd':
+      return Promise.resolve({ ok: true, reason: `${String((args.action as Action)?.type)} sent` });
+
+    case 'test_trigger_cmd': {
+      const trigger = String(args.trigger);
+      const runnable = slotActions(readTrigger(args, trigger)).filter(
+        (action) => action.type !== 'none'
+      );
+      return Promise.resolve(
+        runnable.map((action) => ({ ok: true, reason: `${action.type} sent` }))
+      );
+    }
+
     default:
       return Promise.resolve(true);
   }
@@ -363,6 +381,7 @@ beforeEach(() => {
   currentSnapshot = makeSnapshot();
   invokeMock.mockReset();
   listenMock.mockReset();
+  resetToasts();
   listenMock.mockImplementation(async (name: string, handler: EventHandler) => {
     const unlisten = vi.fn();
     handlers.set(name, handler);
@@ -381,6 +400,7 @@ afterEach(() => {
   for (const dispose of disposers) dispose();
   disposers = [];
   resetAppState();
+  resetToasts();
 });
 
 // -- label editor ------------------------------------------------------------
@@ -1037,20 +1057,136 @@ describe('command failures', () => {
   });
 });
 
-// -- M2 scope ----------------------------------------------------------------
+// -- M3: test buttons (execution, not edits) ---------------------------------
 
-describe('M2 scope', () => {
-  it('never executes or tests an action', async () => {
+describe('test buttons', () => {
+  it('runs the exact action on the card and reports the outcome as a toast', async () => {
     await renderEditor();
 
-    await setField('single', 0, 'mediaKey', 'MUTE');
-    await fireEvent.click(within(triggerList('hold')).getByTestId('action-add'));
+    // The tooltip is the old app's label, not a new invention.
+    const test = within(actionCards('single')[0]).getByTestId('action-test') as HTMLButtonElement;
+    expect(test.title).toBe('Test this action');
+
+    await fireEvent.click(test);
     await flush();
 
-    const commands = invokeMock.mock.calls.map((call) => call[0]);
-    expect(commands).not.toContain('send_device_command_cmd');
-    expect(commands.filter((command) => /test|execute/i.test(String(command)))).toEqual([]);
-    expect(within(actionCards('single')[0]).queryByTestId('action-test')).toBeNull();
+    // The action travels verbatim, metadata included — the core runs what is
+    // stored, never a UI-round-tripped copy.
+    expect(invokeMock).toHaveBeenCalledWith('test_action_cmd', {
+      action: {
+        type: 'media',
+        mediaKey: 'PLAY_PAUSE',
+        mediaArgs: { repeat: 2 },
+        note: 'legacy',
+      },
+    });
+    expect(get(toasts).slice(-1)[0]).toMatchObject({
+      message: 'Test: media sent',
+      kind: 'success',
+    });
+  });
+
+  it('reports a failing outcome as a red toast, not an error banner', async () => {
+    await renderEditor();
+    overrides.set('test_action_cmd', () =>
+      Promise.resolve({ ok: false, reason: 'no serial connection' })
+    );
+
+    await fireEvent.click(within(actionCards('single')[0]).getByTestId('action-test'));
+    await flush();
+
+    expect(get(toasts).slice(-1)[0]).toMatchObject({
+      message: 'Test: no serial connection',
+      kind: 'error',
+    });
+    // A failing test is feedback, not a config failure: `lastError` stays clear.
+    expect(get(lastError)).toBeNull();
+  });
+
+  it('lets even a none slot be tested — the core decides what running none means', async () => {
+    withSingleSlot([{ type: 'none' }]);
+    await renderEditor();
+    overrides.set('test_action_cmd', () =>
+      Promise.resolve({ ok: true, reason: 'nothing to run' })
+    );
+
+    await fireEvent.click(within(actionCards('single')[0]).getByTestId('action-test'));
+    await flush();
+
+    expect(invokeMock).toHaveBeenCalledWith('test_action_cmd', { action: { type: 'none' } });
+    expect(get(toasts).slice(-1)[0]).toMatchObject({
+      message: 'Test: nothing to run',
+      kind: 'success',
+    });
+  });
+
+  it('surfaces a failed invoke through lastError and never fakes a result toast', async () => {
+    await renderEditor();
+    overrides.set('test_action_cmd', () => Promise.reject(new Error('ipc down')));
+
+    await fireEvent.click(within(actionCards('single')[0]).getByTestId('action-test'));
+    await flush();
+
+    expect(get(lastError)).toMatch(/test Single action 1/i);
+    expect(get(lastError)).toMatch(/ipc down/);
+    // No outcome means no toast: a rejection must not read like a green run.
+    expect(get(toasts)).toEqual([]);
+  });
+
+  it('tests a whole trigger and joins the reasons the core reported', async () => {
+    await renderEditor();
+
+    const all = within(triggerList('double')).getByTestId(
+      'action-test-all'
+    ) as HTMLButtonElement;
+    expect(all.title).toBe('Test every action on this trigger');
+
+    await fireEvent.click(all);
+    await flush();
+
+    // The `double` slot holds [none, text, delay]; the core runs the runnable
+    // ones and reports them in list order.
+    expect(invokeMock).toHaveBeenCalledWith('test_trigger_cmd', {
+      buttonIndex: 0,
+      trigger: 'double',
+    });
+    expect(get(toasts).slice(-1)[0]).toMatchObject({
+      message: 'Test: text sent | delay sent',
+      kind: 'success',
+    });
+  });
+
+  it('turns the joined toast red as soon as any action of the trigger fails', async () => {
+    await renderEditor();
+    overrides.set('test_trigger_cmd', () =>
+      Promise.resolve([
+        { ok: true, reason: 'text sent' },
+        { ok: false, reason: 'no serial connection' },
+      ])
+    );
+
+    await fireEvent.click(within(triggerList('double')).getByTestId('action-test-all'));
+    await flush();
+
+    expect(get(toasts).slice(-1)[0]).toMatchObject({
+      message: 'Test: text sent | no serial connection',
+      kind: 'error',
+    });
+  });
+
+  it('offers the info toast for a trigger with nothing runnable, without invoking', async () => {
+    await renderEditor();
+    // The `hold` slot is `{ type: 'none' }` in the default fixture.
+
+    await fireEvent.click(within(triggerList('hold')).getByTestId('action-test-all'));
+    await flush();
+
+    expect(get(toasts).slice(-1)[0]).toMatchObject({
+      message: 'No actions on this trigger',
+      kind: 'info',
+    });
+    const testers = invokeMock.mock.calls.filter(([command]) => command === 'test_trigger_cmd');
+    expect(testers).toHaveLength(0);
   });
 });
 

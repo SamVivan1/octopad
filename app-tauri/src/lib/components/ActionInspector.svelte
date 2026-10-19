@@ -10,8 +10,10 @@
    *
    * Two M2 rules are visible in the code:
    *
-   * - **Nothing is executed.** Editing an action only writes configuration; the
-   *   device is never touched from here (no test button, no send).
+   * - **Edits write configuration, nothing more.** Nothing here patches the
+   *   config itself. Running an action is the action list's Test button (M3),
+   *   whose result is a toast — execution feedback, never an edit — so those
+   *   commands bypass `onEdit` entirely by design.
    * - **Failures are visible.** The shared `lastError` store is rendered as an
    *   alert, so a rejected command is never mistaken for an applied edit.
    */
@@ -63,6 +65,7 @@
         <ActionListEditor
           trigger={entry.trigger}
           caption={entry.caption}
+          buttonIndex={button.index}
           slot={button[entry.trigger]}
           {onEdit}
         />

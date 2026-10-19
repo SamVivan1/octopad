@@ -130,6 +130,29 @@ export function setTiming(field: TimingField, value: number): Promise<boolean> {
   return invoke<boolean>('set_timing_cmd', { field, value });
 }
 
+// -- action execution (M3) ----------------------------------------------------
+//
+// Running actions is execution, not editing: these commands never change the
+// config and are deliberately issued *outside* the serialized edit queue, the
+// way the old app threaded its test buttons. They report per action; only an
+// invoke that itself fails (transport down, command missing) rejects.
+
+/** `bridge::ActionOutcome` — one attempted action's result. */
+export interface ActionOutcome {
+  ok: boolean;
+  reason: string;
+}
+
+/** Run one action as it is stored — `none` included, the core decides what that means. */
+export function testAction(action: Action): Promise<ActionOutcome> {
+  return invoke<ActionOutcome>('test_action_cmd', { action });
+}
+
+/** Run every runnable action of a trigger's slot, in list order. */
+export function testTrigger(buttonIndex: number, trigger: Trigger): Promise<ActionOutcome[]> {
+  return invoke<ActionOutcome[]>('test_trigger_cmd', { buttonIndex, trigger });
+}
+
 // -- device ------------------------------------------------------------------
 
 /** `false` when the name is rejected or the transport write fails. */

@@ -31,6 +31,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 import ButtonsPage from './ButtonsPage.svelte';
 import { appState, initializeAppState, resetAppState } from '../state';
+import { resetToasts, toasts } from '../toast';
 import type { AppSnapshot, Button, Mode } from '../types';
 
 // -- fixtures ----------------------------------------------------------------
@@ -199,6 +200,7 @@ beforeEach(async () => {
   currentSnapshot = makeSnapshot();
   invokeMock.mockReset();
   listenMock.mockReset();
+  resetToasts();
   invokeMock.mockImplementation((command: string) => invokeDefault(command));
   listenMock.mockImplementation(async (name: string, handler: EventHandler) => {
     const unlisten = vi.fn();
@@ -214,6 +216,7 @@ afterEach(() => {
   for (const dispose of disposers) dispose();
   disposers = [];
   resetAppState();
+  resetToasts();
 });
 
 // -- the eight physical keys -------------------------------------------------
@@ -515,5 +518,57 @@ describe('command ordering', () => {
     // The chain survives the rejection, so the next command still runs.
     await expect(editorOf(view).runEdit(async () => true)).resolves.toBe(true);
     expect(get(appState)?.selectedIndex).toBe(0);
+  });
+});
+
+// -- action tests (M3): execution is not an edit -----------------------------
+
+describe('action test buttons', () => {
+  it('runs a test outside the edit queue while a queued edit is still waiting', async () => {
+    const gate = deferred<boolean>();
+    invokeMock.mockImplementation((command: string) => {
+      commandLog.push(command);
+      if (command === 'get_state_snapshot') {
+        return Promise.resolve(structuredClone(currentSnapshot));
+      }
+      if (command === 'list_presets_cmd') return Promise.resolve([]);
+      if (command === 'select_button_cmd') return gate.promise;
+      if (command === 'test_action_cmd') {
+        return Promise.resolve({ ok: true, reason: 'F1 sent' });
+      }
+      return Promise.resolve(true);
+    });
+
+    const view = await renderPage();
+
+    // An edit queued behind an in-flight selection must wait…
+    fireEvent.click(screen.getByRole('button', { name: 'Key 5: Music' }));
+    const edits: string[] = [];
+    const queuedEdit = editorOf(view).runEdit(async () => {
+      edits.push('edit');
+      return true;
+    });
+    await flush();
+    expect(commandLog).toContain('select_button_cmd');
+    expect(edits).toEqual([]);
+
+    // …but a test is execution, not an edit: it must reach the core right away,
+    // without waiting for the selection or displacing the queued edit.
+    await fireEvent.click(
+      within(screen.getByTestId('buttons-inspector')).getAllByTestId('action-test')[0]
+    );
+    await flush();
+
+    expect(commandLog).toContain('test_action_cmd');
+    expect(invokeMock).toHaveBeenCalledWith('test_action_cmd', {
+      action: { type: 'shortcut', key: 'F1', ctrl: true },
+    });
+    expect(get(toasts).slice(-1)[0]).toMatchObject({ message: 'Test: F1 sent', kind: 'success' });
+    // The queue is untouched: the edit is still waiting for its turn.
+    expect(edits).toEqual([]);
+
+    gate.resolve(true);
+    await expect(queuedEdit).resolves.toBe(true);
+    expect(edits).toEqual(['edit']);
   });
 });

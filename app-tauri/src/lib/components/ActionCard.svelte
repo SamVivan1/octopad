@@ -3,17 +3,22 @@
    * One action inside a trigger slot: its type, its fields, and the controls
    * that change its position in the list.
    *
-   * Every control here issues one command through the page's serialized
+   * Every edit control here issues one command through the page's serialized
    * `onEdit` queue and then stops: the card renders whatever the core last
    * reported. Nothing is patched locally, so a rejected command simply leaves
    * the previous action on screen (with the failure surfaced by the inspector).
    *
-   * Actions are edited only. Running one is an M3 feature, so there is no test
-   * button here — nothing in this component can reach the device.
+   * Actions are edited here; *running* one is M3's execution. The Test button
+   * is the one control that does not touch the queue: execution must not be
+   * serialized behind a pending edit, and its result is feedback (a toast),
+   * not a config change — so it never waits for `onEdit` and never needs the
+   * core to confirm anything. Only a failed invoke itself (no bridge, command
+   * missing) becomes an error, through `runCommand` like every other command.
    */
   import ActionFields, { ACTION_TYPES, actionTypeLabel, withType } from './ActionFields.svelte';
   import * as api from '../api';
   import { runCommand } from '../state';
+  import { show } from '../toast';
   import type { Action, Trigger } from '../types';
 
   /** The page's command queue: one edit at a time, in the order it was queued. */
@@ -74,6 +79,24 @@
     if (index < 0 || index >= total) return;
     void onEdit(() => runCommand(`remove ${position}`, () => api.removeAction(trigger, index)));
   }
+
+  /**
+   * Run this action as it is stored, execution not editing: it bypasses
+   * `onEdit` entirely, so a pending edit never delays or reshapes it. The
+   * `ok`/`reason` pair is a toast, exactly the old app's "Test: {result}"; a
+   * rejected invoke is *not* an outcome — `runCommand` re-raises it so the
+   * failure lands in `lastError` instead of a toast reading like a green run.
+   */
+  function test(): void {
+    void api
+      .testAction(action)
+      .then((outcome) => {
+        show(`Test: ${outcome.reason}`, outcome.ok ? 'success' : 'error');
+      })
+      .catch((error: unknown) => {
+        void runCommand(`test ${position}`, () => Promise.reject(error));
+      });
+  }
 </script>
 
 <article
@@ -103,6 +126,15 @@
     </select>
 
     <span class="action-card__controls">
+      <button
+        type="button"
+        class="btn action-card__control action-card__control--test"
+        data-testid="action-test"
+        title="Test this action"
+        onclick={test}
+      >
+        ▶
+      </button>
       <button
         type="button"
         class="btn action-card__control"
@@ -193,5 +225,16 @@
     min-height: 26px;
     min-width: 30px;
     padding: 2px 8px;
+  }
+
+  /* The old app made the test button the suggested action; keep that emphasis. */
+  .action-card__control--test {
+    color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+
+  .action-card__control--test:hover:not(:disabled) {
+    background-color: var(--accent-soft);
   }
 </style>

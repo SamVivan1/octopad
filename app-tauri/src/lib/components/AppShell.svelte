@@ -18,6 +18,7 @@
 
   import Sidebar from './Sidebar.svelte';
   import StatusHeader from './StatusHeader.svelte';
+  import ToastHost from './ToastHost.svelte';
   import ButtonsPage from '../pages/ButtonsPage.svelte';
   import ConsolePage from '../pages/ConsolePage.svelte';
   import ProfilesPage from '../pages/ProfilesPage.svelte';
@@ -122,6 +123,13 @@
       {visibleError}
     </div>
   {/if}
+
+  <!--
+    M3 feedback channel for results that are informational rather than failures
+    to act on (an action test's outcome today): fixed, non-modal, announced as
+    a status. It stays in one page position so a result outlives page switches.
+  -->
+  <ToastHost />
 </div>
 
 <style>

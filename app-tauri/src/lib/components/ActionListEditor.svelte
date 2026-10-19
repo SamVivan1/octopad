@@ -16,17 +16,20 @@
   import ActionCard from './ActionCard.svelte';
   import * as api from '../api';
   import { runCommand } from '../state';
+  import { show } from '../toast';
   import type { Action, Trigger, TriggerSlot } from '../types';
   import type { EditQueue } from './ActionCard.svelte';
 
   interface Props {
     trigger: Trigger;
     caption: string;
+    /** Which physical key this slot belongs to; the core must be told. */
+    buttonIndex: number;
     slot: TriggerSlot;
     onEdit: EditQueue;
   }
 
-  let { trigger, caption, slot, onEdit }: Props = $props();
+  let { trigger, caption, buttonIndex, slot, onEdit }: Props = $props();
 
   function isAction(value: unknown): value is Action {
     return (
@@ -48,6 +51,32 @@
   function add(): void {
     void onEdit(() => runCommand(`add ${caption} action`, () => api.addAction(trigger)));
   }
+
+  /**
+   * "Test all" — run every runnable action of this trigger and report as one
+   * joined toast, exactly the old app's `_test_all`: "Test: " + reasons joined
+   * with " | ", green only when every outcome is ok, and the info toast when
+   * nothing here can run at all (no invoke either).
+   *
+   * Like the card's Test button this is execution, not an edit: it bypasses
+   * `onEdit` so it never queues behind a pending edit. A failed invoke is not
+   * an outcome — `runCommand` records it in `lastError` instead of a toast.
+   */
+  async function testAll(): Promise<void> {
+    const runnable = actions.filter((action) => action.type !== 'none');
+    if (runnable.length === 0) {
+      show('No actions on this trigger', 'info');
+      return;
+    }
+    try {
+      const outcomes = await api.testTrigger(buttonIndex, trigger);
+      const ok = outcomes.every((outcome) => outcome.ok);
+      const message = outcomes.map((outcome) => outcome.reason).join(' | ');
+      show(`Test: ${message}`, ok ? 'success' : 'error');
+    } catch (error) {
+      void runCommand(`test all ${caption} actions`, () => Promise.reject(error));
+    }
+  }
 </script>
 
 <section
@@ -62,6 +91,15 @@
       {caption}
     </h3>
     <span class="pill trigger__count">{actions.length}</span>
+    <button
+      type="button"
+      class="btn trigger__test"
+      data-testid="action-test-all"
+      title="Test every action on this trigger"
+      onclick={testAll}
+    >
+      Test all
+    </button>
     <button
       type="button"
       class="btn trigger__add"
@@ -149,6 +187,7 @@
   }
 
   .trigger__add {
+    /* Last in the header: its auto margin pushes both end buttons right. */
     margin-left: auto;
   }
 
