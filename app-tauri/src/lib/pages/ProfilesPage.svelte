@@ -82,7 +82,8 @@
     if (imported && captured.report) {
       // The core already emitted `config-replaced`; re-read anyway so the page
       // shows the imported working copy even if the event was coalesced. No
-      // save happens here: an import never writes the config file.
+      // save happens here: a manual import only loads the working copy and
+      // never writes the config file.
       await refreshAppState();
       feedback = describeImport(captured.report);
     } else {
@@ -146,8 +147,8 @@
     </div>
 
     <p class="muted profiles__hint">
-      Importing replaces the working copy and marks it as unsaved. Nothing is written to disk until
-      you choose Save.
+      Importing replaces the working copy and marks it as unsaved. The config file is only written
+      when you choose Save; legacy presets are copied across straight away.
     </p>
   </div>
 

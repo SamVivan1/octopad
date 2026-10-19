@@ -264,9 +264,12 @@ async fn corrupt_legacy_import_keeps_config_and_state_events_untouched() {
 }
 
 #[tokio::test]
-async fn successful_legacy_import_replaces_config_and_runs_dirty_flow() {
+async fn successful_legacy_import_loads_working_config_without_saving() {
     let temp = tempdir().unwrap();
     let store = ConfigStore::at(temp.path().join("OctoPad"));
+    let mut saved_config = default_config();
+    saved_config.modes[0].buttons[0].label = "Saved label".to_string();
+    store.save_config(&saved_config).unwrap();
     let state = Arc::new(AppState::new(store.clone()));
     let recorder = EventRecorder::default();
     let _subscription = state.subscribe(recorder.callback());
@@ -285,6 +288,11 @@ async fn successful_legacy_import_replaces_config_and_runs_dirty_flow() {
     assert!(report.imported_config);
     assert_eq!(state.config().modes[0].buttons[0].label, "Imported label");
     assert!(state.is_dirty());
+    assert_eq!(
+        store.load_config().modes[0].buttons[0].label,
+        "Saved label",
+        "explicit import must not overwrite the saved config"
+    );
     assert_eq!(
         recorder.events(),
         vec![
