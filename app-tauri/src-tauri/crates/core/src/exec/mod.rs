@@ -19,6 +19,10 @@
 
 pub mod runner;
 
+/// The button action chain: press → mode → button → actions
+/// (`linux-app/serial_listener.py:70`).
+pub mod chain;
+
 /// The ten built-in presets (`linux-app/system_actions.py:16`). Always
 /// compiled: the ids and the tool order are the same everywhere.
 pub mod system;
@@ -36,6 +40,11 @@ use serde_json::Value;
 use crate::config::model::Action;
 
 pub use runner::{CommandCall, RealCommandRunner, RecordingRunner};
+
+pub use chain::{
+    resolve_actions, spawn_trigger_chain, ChainDeps, SharedCommandRunner, SharedInputInjector,
+    SharedSleeper,
+};
 
 pub use system::{execute_system_preset, preset_by_id, SystemPreset, SYSTEM_PRESETS};
 

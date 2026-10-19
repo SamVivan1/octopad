@@ -52,6 +52,17 @@ pub fn connect_device_events(
                         trigger.to_uppercase()
                     );
                     state.log(line);
+                    // M3.1: the press also *does* something. The chain runs on a
+                    // blocking task, so a `delay` of minutes never stalls this
+                    // loop (and therefore never stalls the UI); it re-reads the
+                    // working config itself, so an edit made between the press
+                    // and the run is the one that executes.
+                    crate::exec::spawn_trigger_chain(
+                        crate::exec::ChainDeps::production(state.clone()),
+                        &mode,
+                        index,
+                        &trigger,
+                    );
                 }
                 DeviceEvent::Error { message } => {
                     state.log(format!("[ERROR] {message}"));

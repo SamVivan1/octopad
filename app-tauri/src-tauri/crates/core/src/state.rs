@@ -993,7 +993,10 @@ fn button_mut(inner: &mut Inner) -> &mut Button {
 }
 
 /// The `actions_list` view of one trigger slot.
-fn actions_of(button: &Button, trigger: &str) -> Vec<Action> {
+///
+/// `pub(crate)` so the action chain (`exec::chain`) resolves a trigger the same
+/// way instead of keeping a second, drifting copy of the trigger names.
+pub(crate) fn actions_of(button: &Button, trigger: &str) -> Vec<Action> {
     match trigger {
         "single" => button.single.as_slice().to_vec(),
         "double" => button.double.as_slice().to_vec(),

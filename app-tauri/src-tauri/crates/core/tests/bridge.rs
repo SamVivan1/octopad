@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use octopad_core::bridge::{connect_device_events, run_import_from_legacy_dir};
-use octopad_core::config::{default_config, ConfigStore};
+use octopad_core::config::{default_config, Action, ConfigStore, TriggerActions};
 use octopad_core::device::manager::{DeviceManager, DeviceTransport};
 use octopad_core::device::{DeviceEvent, TransportKind};
 use octopad_core::state::{AppEvent, AppState};
@@ -187,9 +189,12 @@ async fn device_events_update_state_and_emit_serial_logs() {
     .await
     .unwrap();
     tx.send(DeviceEvent::ButtonEvent {
+        // B2's `double` slot is `none` in the default config, so the chain this
+        // press now spawns stays a no-op: the default config's `single` slots
+        // hold real system actions that must not run inside a test.
         mode: "desktop".to_string(),
-        index: 2,
-        trigger: "single".to_string(),
+        index: 1,
+        trigger: "double".to_string(),
     })
     .await
     .unwrap();
@@ -229,11 +234,71 @@ async fn device_events_update_state_and_emit_serial_logs() {
                 line: "HELLO:OCTOPAD:My Pad:v2.6".to_string()
             },
             AppEvent::SerialLog {
-                line: "[DESKTOP] Button 3 -> SINGLE".to_string()
+                line: "[DESKTOP] Button 2 -> DOUBLE".to_string()
             },
             AppEvent::SerialLog {
                 line: "[ERROR] USB read failed".to_string()
             },
+        ]
+    );
+}
+
+/// M3.1: a press no longer only logs — it runs the configured chain on a
+/// blocking task. An empty `text` payload fails inside the dispatcher before any
+/// injector is touched, so the assertion is end-to-end but side-effect free.
+#[tokio::test]
+async fn a_button_event_executes_the_configured_action_chain() {
+    let temp = tempdir().unwrap();
+    let state = state_in(temp.path());
+    let mut config = state.config();
+    config.modes[0].buttons[2].single = TriggerActions::from_list(vec![Action {
+        action_type: "text".to_string(),
+        extra: HashMap::from([("text".to_string(), json!(""))]),
+    }]);
+    state.set_config(config, "test");
+    let recorder = EventRecorder::default();
+    let _subscription = state.subscribe(recorder.callback());
+    let (tx, rx) = mpsc::channel(16);
+    let task = connect_device_events(state.clone(), rx);
+
+    tx.send(DeviceEvent::ButtonEvent {
+        mode: "desktop".to_string(),
+        index: 2,
+        trigger: "single".to_string(),
+    })
+    .await
+    .unwrap();
+    drop(tx);
+    task.await.unwrap();
+
+    // The chain runs on a blocking task, so its lines can land after the bridge
+    // loop is done: wait for the result line instead of assuming an order.
+    let started = Instant::now();
+    let lines = loop {
+        let lines: Vec<String> = recorder
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                AppEvent::SerialLog { line } => Some(line.clone()),
+                _ => None,
+            })
+            .collect();
+        if lines.iter().any(|line| line.starts_with("[ACTION]")) {
+            break lines;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the chain never logged: {lines:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+
+    assert_eq!(
+        lines,
+        vec![
+            "[DESKTOP] Button 3 -> SINGLE".to_string(),
+            "Executing action for Button 3 (single) -> Type: text".to_string(),
+            "[ACTION] B3 (SINGLE): Empty text [FAIL]".to_string(),
         ]
     );
 }
