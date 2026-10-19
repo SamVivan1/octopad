@@ -137,6 +137,15 @@ export function renameDevice(name: string): Promise<boolean> {
   return invoke<boolean>('rename_device_cmd', { name });
 }
 
+/**
+ * Quit for real: signal runtime shutdown and exit, exactly like the tray Quit
+ * item. Closing the window is deliberately *not* this command — that only hides
+ * the window and leaves the device connections running.
+ */
+export function quitApp(): Promise<void> {
+  return invoke<void>('quit_app_cmd');
+}
+
 /** `true` only after a transport reports a successful write. */
 export function sendDeviceCommand(command: string): Promise<boolean> {
   return invoke<boolean>('send_device_command_cmd', { command });

@@ -83,7 +83,13 @@ function readNullableString(payload: Payload, key: string): string | null | unde
   return value === null ? null : undefined;
 }
 
-function describeError(error: unknown): string {
+/**
+ * Turn any thrown value into one line of readable text.
+ *
+ * Shared so every failure channel — core commands and the OS-backed autostart
+ * plugin — reports a rejection in the same voice.
+ */
+export function describeError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
@@ -154,9 +160,27 @@ function scheduleRefresh(): Promise<void> {
   return refreshChain;
 }
 
-/** Pull the current snapshot on demand (pull-to-refresh, retry buttons). */
+/**
+ * Pull the current snapshot on demand (pull-to-refresh, retry buttons).
+ */
 export function refreshAppState(): Promise<void> {
   return scheduleRefresh();
+}
+
+/**
+ * Save the working config through the core and re-read the snapshot.
+ *
+ * The one save path: the Profiles button and the `Ctrl+S` shortcut both call
+ * this, so a save can never behave differently depending on how it was
+ * triggered. Re-reading after a successful save keeps the path, the active
+ * preset and the dirty flag exactly as the core holds them.
+ */
+export async function saveWorkingConfig(): Promise<boolean> {
+  const saved = await runCommand('save configuration', () => api.saveConfig());
+  if (saved) {
+    await scheduleRefresh();
+  }
+  return saved;
 }
 
 async function refreshPresets(): Promise<void> {

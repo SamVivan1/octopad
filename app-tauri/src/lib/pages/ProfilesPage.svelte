@@ -19,7 +19,7 @@
 
   import * as api from '../api';
   import { importErrorMessage } from '../api';
-  import { appState, lastError, refreshAppState, runCommand } from '../state';
+  import { appState, lastError, refreshAppState, runCommand, saveWorkingConfig } from '../state';
   import type { ImportReport } from '../types';
 
   type FeedbackTone = 'ok' | 'warn' | 'error';
@@ -44,11 +44,12 @@
   async function save(): Promise<void> {
     busy = true;
     feedback = null;
-    const saved = await runCommand('save configuration', () => api.saveConfig());
+    // The shared save path, also used by the `Ctrl+S` shortcut: it persists the
+    // working config and re-reads the snapshot so the path, the preset and the
+    // dirty flag are exactly what the core holds after the write, not what the
+    // UI assumed it would be.
+    const saved = await saveWorkingConfig();
     if (saved) {
-      // Re-read so the path, the preset and the dirty flag are exactly what the
-      // core holds after the write, not what the UI assumed it would be.
-      await refreshAppState();
       feedback = { tone: 'ok', text: `Configuration saved to ${configPath || 'the config file'}.` };
     } else {
       feedback = {

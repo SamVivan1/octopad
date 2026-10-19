@@ -30,16 +30,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 
-const { invokeMock, listenMock } = vi.hoisted(() => ({
+const { invokeMock, listenMock, enableMock, disableMock, isEnabledMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   listenMock: vi.fn(),
+  enableMock: vi.fn(),
+  disableMock: vi.fn(),
+  isEnabledMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
+vi.mock('@tauri-apps/plugin-autostart', () => ({
+  enable: enableMock,
+  disable: disableMock,
+  isEnabled: isEnabledMock,
+}));
 
 import ProfilesPage from './ProfilesPage.svelte';
 import SettingsPage from './SettingsPage.svelte';
+import { autostartEnabled, resetAutostart } from '../autostart';
 import { appState, initializeAppState, resetAppState } from '../state';
 import type { AppSnapshot, Button, Config } from '../types';
 
@@ -250,6 +259,27 @@ function profilesFeedback(): string {
   return screen.getByTestId('profiles-feedback').textContent?.trim() ?? '';
 }
 
+/**
+ * A stand-in for the OS autostart entry, which lives outside the process: it
+ * holds the real flag and every write changes it, so the page can only show the
+ * truth by asking the platform rather than by remembering a click.
+ */
+function fakePlatform(enabled: boolean): { state: boolean } {
+  const platform = { state: enabled };
+  isEnabledMock.mockImplementation(async () => platform.state);
+  enableMock.mockImplementation(async () => {
+    platform.state = true;
+  });
+  disableMock.mockImplementation(async () => {
+    platform.state = false;
+  });
+  return platform;
+}
+
+function autostartToggle(): HTMLInputElement {
+  return screen.getByTestId('autostart-toggle') as HTMLInputElement;
+}
+
 beforeEach(async () => {
   handlers = new Map();
   overrides = new Map();
@@ -258,6 +288,14 @@ beforeEach(async () => {
   diskConfig = structuredClone(currentSnapshot.config);
   invokeMock.mockReset();
   listenMock.mockReset();
+  enableMock.mockReset();
+  disableMock.mockReset();
+  isEnabledMock.mockReset();
+  // Autostart is off by default for the timing/device/profiles tests; each
+  // autostart test installs its own platform state.
+  isEnabledMock.mockImplementation(async () => false);
+  enableMock.mockImplementation(async () => undefined);
+  disableMock.mockImplementation(async () => undefined);
   invokeMock.mockImplementation((command: string, args: Record<string, unknown> = {}) => {
     commandLog.push(command);
     return fakeCore(command, args);
@@ -268,12 +306,14 @@ beforeEach(async () => {
     return unlisten;
   });
   resetAppState();
+  resetAutostart();
   await initializeAppState();
 });
 
 afterEach(() => {
   cleanup();
   resetAppState();
+  resetAutostart();
 });
 
 // -- timing controls ---------------------------------------------------------
@@ -581,5 +621,86 @@ describe('profiles workflow', () => {
     expect(get(appState)?.dirty).toBe(true);
     expect(profilesState()).toBe('Unsaved changes');
     expect(diskConfig.holdTimeoutMs).toBe(450);
+  });
+});
+// -- autostart ----------------------------------------------------------------
+
+describe('autostart toggle', () => {
+  it('shows the platform autostart state when the page is opened', async () => {
+    fakePlatform(true);
+    await renderSettings();
+
+    expect(isEnabledMock).toHaveBeenCalled();
+    expect(autostartToggle().checked).toBe(true);
+    expect(screen.getByTestId('autostart-status').textContent).toMatch(/at login/i);
+  });
+
+  it('enables autostart through the platform and shows the confirmed state', async () => {
+    const platform = fakePlatform(false);
+    await renderSettings();
+    expect(autostartToggle().checked).toBe(false);
+
+    await fireEvent.click(autostartToggle());
+    await flush();
+
+    expect(enableMock).toHaveBeenCalledTimes(1);
+    expect(disableMock).not.toHaveBeenCalled();
+    expect(platform.state).toBe(true);
+    // The control reflects the platform re-read, not the click.
+    expect(isEnabledMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(autostartToggle().checked).toBe(true);
+    expect(get(autostartEnabled)).toBe(true);
+  });
+
+  it('disables autostart through the platform and shows the confirmed state', async () => {
+    const platform = fakePlatform(true);
+    await renderSettings();
+    expect(autostartToggle().checked).toBe(true);
+
+    await fireEvent.click(autostartToggle());
+    await flush();
+
+    expect(disableMock).toHaveBeenCalledTimes(1);
+    expect(enableMock).not.toHaveBeenCalled();
+    expect(platform.state).toBe(false);
+    expect(autostartToggle().checked).toBe(false);
+    expect(get(autostartEnabled)).toBe(false);
+  });
+
+  it('reports a rejected write and falls back to the real platform state', async () => {
+    fakePlatform(false);
+    await renderSettings();
+    enableMock.mockRejectedValue(new Error('access denied'));
+
+    await fireEvent.click(autostartToggle());
+    await flush();
+
+    expect(screen.getByTestId('autostart-error').textContent).toMatch(/autostart/i);
+    expect(autostartToggle().checked).toBe(false);
+    expect(get(autostartEnabled)).toBe(false);
+  });
+
+  it('reports a write the platform silently ignored instead of claiming success', async () => {
+    fakePlatform(false);
+    await renderSettings();
+    enableMock.mockImplementation(async () => undefined);
+
+    await fireEvent.click(autostartToggle());
+    await flush();
+
+    expect(screen.getByTestId('autostart-error').textContent).toMatch(/autostart/i);
+    expect(autostartToggle().checked).toBe(false);
+  });
+
+  it('never claims a state the platform would not report', async () => {
+    fakePlatform(true);
+    isEnabledMock.mockRejectedValue(new Error('registry unavailable'));
+    await renderSettings();
+
+    const toggle = autostartToggle();
+    expect(toggle.checked).toBe(false);
+    expect(toggle.disabled).toBe(true);
+    expect(screen.getByTestId('autostart-status').textContent).toMatch(/unavailable/i);
+    expect(get(autostartEnabled)).toBeNull();
   });
 });

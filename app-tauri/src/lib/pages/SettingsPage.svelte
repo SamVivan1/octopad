@@ -9,8 +9,8 @@
 
 <script lang="ts">
   /**
-   * Settings — the three firmware timings, the device name, and what the pad
-   * currently reports about itself.
+   * Settings — the three firmware timings, the device name, what the pad
+   * currently reports about itself, and the login/startup behaviour.
    *
    * The same three rules as the rest of the app apply:
    *
@@ -24,11 +24,18 @@
    * - **The pad is only told what the pad accepted.** A rename is sent through
    *   the transport, and the input goes back to the reported name when the
    *   write fails.
+   *
+   * Autostart follows the same rule from the other side: the flag lives in the
+   * OS, so the page shows only what `tauri-plugin-autostart` reports and
+   * re-reads after every write. A failed read leaves the toggle disabled
+   * ("unavailable") rather than showing a made-up position.
    */
+  import { onMount } from 'svelte';
   import { get } from 'svelte/store';
 
   import TimingControls from '../components/TimingControls.svelte';
   import * as api from '../api';
+  import { autostartEnabled, readAutostart, setAutostart } from '../autostart';
   import { appState, lastError, runCommand } from '../state';
 
   const snapshot = $derived($appState);
@@ -131,6 +138,63 @@
     renameError = get(lastError) ?? 'The device could not be renamed.';
     restoreReportedName();
   }
+
+  // -- autostart --------------------------------------------------------------
+  //
+  // The login entry is OS state, not app state, so the toggle is a mirror: it is
+  // filled in by reading the platform, and every write is confirmed by reading
+  // it again. `autostartEnabled === null` means "not known" — a failed read
+  // disables the control instead of guessing a position.
+
+  let autostartLoaded = $state(false);
+  let autostartBusy = $state(false);
+  let autostartError = $state<string | null>(null);
+  let autostartInput = $state<HTMLInputElement | undefined>(undefined);
+
+  const autostartOn = $derived($autostartEnabled === true);
+  const autostartUnavailable = $derived(autostartLoaded && $autostartEnabled === null);
+  const autostartStatus = $derived(
+    !autostartLoaded
+      ? 'Reading the login entry…'
+      : autostartUnavailable
+        ? 'The autostart state is unavailable.'
+        : autostartOn
+          ? 'OctoPad starts at login.'
+          : 'OctoPad does not start at login.'
+  );
+
+  onMount(() => {
+    void readAutostart().finally(() => {
+      autostartLoaded = true;
+    });
+  });
+
+  /**
+   * Put the platform state back on the control.
+   *
+   * Written as well as derived: a write that fails leaves the store's value
+   * unchanged, so nothing re-renders and the click's own `checked` flip would
+   * otherwise stay on screen as a change that never happened.
+   */
+  function syncAutostartControl(): void {
+    if (autostartInput) {
+      autostartInput.checked = autostartOn;
+    }
+  }
+
+  async function toggleAutostart(): Promise<void> {
+    const requested = autostartInput?.checked ?? !autostartOn;
+    autostartBusy = true;
+    autostartError = null;
+
+    const changed = await setAutostart(requested);
+    autostartBusy = false;
+
+    if (!changed) {
+      autostartError = get(lastError) ?? 'The autostart setting could not be changed.';
+    }
+    syncAutostartControl();
+  }
 </script>
 
 <section class="page" data-page="settings" data-testid="active-page">
@@ -216,6 +280,40 @@
       <dd data-testid="settings-connection-message">{connectionMessage}</dd>
     </dl>
   </div>
+
+  <div class="card">
+    <h2 class="section-title">Application</h2>
+
+    <div class="settings__toggle">
+      <input
+        id="autostart"
+        class="settings__checkbox"
+        type="checkbox"
+        aria-describedby="autostart-status"
+        data-testid="autostart-toggle"
+        checked={autostartOn}
+        disabled={autostartBusy || autostartUnavailable}
+        onchange={toggleAutostart}
+        bind:this={autostartInput}
+      />
+      <label class="settings__label" for="autostart">Start OctoPad at login</label>
+    </div>
+
+    <p class="muted settings__hint" id="autostart-status" data-testid="autostart-status">
+      {autostartStatus}
+    </p>
+
+    {#if autostartError}
+      <p class="alert alert--error settings__alert" role="alert" data-testid="autostart-error">
+        {autostartError}
+      </p>
+    {/if}
+
+    <p class="muted settings__hint">
+      Started at login, OctoPad opens in the tray with its window hidden. Closing the window hides
+      it as well and keeps the device connections running; use Quit in the tray menu to exit.
+    </p>
+  </div>
 </section>
 
 <style>
@@ -252,6 +350,24 @@
 
   .settings__input[aria-invalid='true'] {
     border-color: var(--error);
+  }
+
+  .settings__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .settings__checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .settings__checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   .settings__alert {
