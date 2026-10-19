@@ -202,8 +202,47 @@ fn get_version() -> String {
     "0.1.0".to_string()
 }
 
+/// WebKit knobs that cut the app's real memory footprint.
+///
+/// Measured on this machine (Linux, fresh load, idle, worst of three samples per
+/// process, via `scripts/mem_probe.sh`):
+///
+/// | configuration                   | RSS sum | PSS sum |
+/// |---------------------------------|---------|---------|
+/// | default                         | 515 MiB | 258 MiB |
+/// | `WEBKIT_DISABLE_DMABUF_RENDERER`| 440 MiB | 193 MiB |
+/// | both flags below                | 434 MiB | 185 MiB |
+///
+/// The RSS column overstates the cost: the app runs nine processes and RSS counts
+/// pages shared between them more than once. PSS is the number to compare against
+/// the legacy single-process Python app.
+///
+/// `LIBGL_ALWAYS_SOFTWARE=1` is deliberately NOT set: measured on its own it made
+/// the app worse (PSS 526 MiB) because software GL rasterises into large CPU-side
+/// buffers. It once looked marginally better inside a three-flag run, and three
+/// repeats proved that was noise (209/200/194 MiB — no better than the two flags).
+///
+/// Existing values win, so a user can still override any of them.
+fn apply_webview_memory_env() {
+    const DEFAULTS: [(&str, &str); 2] = [
+        // The DMA-BUF renderer is the single largest allocator in WebKitGTK.
+        ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+        // Skips the extra compositing surfaces WebKit keeps per view.
+        ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
+    ];
+    for (key, value) in DEFAULTS {
+        if std::env::var_os(key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Must run before Tauri initialises the webview: WebKitGTK reads these once
+    // during startup, so setting them afterwards silently does nothing.
+    apply_webview_memory_env();
+
     let app = tauri::Builder::default()
         // Registered first, before every other plugin: a second launch must be
         // intercepted before anything else initialises a second runtime.
