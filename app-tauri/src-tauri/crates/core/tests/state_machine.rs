@@ -536,6 +536,64 @@ fn mode_and_selection_early_return_without_an_event_when_unchanged() {
 }
 
 #[test]
+fn out_of_range_mode_indices_change_nothing_and_emit_nothing() {
+    let dir = tempdir().unwrap();
+    let state = state_in(&dir);
+    let recorder = Recorder::new();
+    let _sub = state.subscribe(recorder.callback());
+    let before = state.config();
+
+    assert!(!state.set_mode(2));
+    assert!(!state.set_mode(-1));
+    assert!(!state.set_mode(i64::MAX));
+    assert!(recorder.events().is_empty());
+    assert_eq!(state.mode_index(), 0);
+    assert_eq!(
+        state.config(),
+        before,
+        "a rejected mode must not mutate config"
+    );
+    assert!(!state.has_changes());
+    assert!(!state.is_dirty());
+
+    // A valid but unchanged index is still a successful no-op.
+    assert!(state.set_mode(0));
+    assert!(recorder.events().is_empty());
+}
+
+#[test]
+fn out_of_range_button_indices_change_nothing_and_emit_nothing() {
+    let dir = tempdir().unwrap();
+    let state = state_in(&dir);
+    let recorder = Recorder::new();
+    let _sub = state.subscribe(recorder.callback());
+    let before = state.config();
+
+    assert!(!state.select_button(8));
+    assert!(!state.select_button(-1));
+    assert!(!state.select_button(i64::MAX));
+    assert!(recorder.events().is_empty());
+    assert_eq!(state.selected_index(), 0);
+    assert_eq!(
+        state.config(),
+        before,
+        "a rejected button must not mutate config"
+    );
+    assert!(!state.has_changes());
+
+    // A valid but unchanged index is still a successful no-op.
+    assert!(state.select_button(0));
+    assert!(recorder.events().is_empty());
+
+    // The last valid button works, and the bound follows the *current* mode.
+    assert!(state.set_mode(1));
+    assert!(state.select_button(7));
+    assert_eq!(recorder.names(), vec!["mode-changed", "selection-changed"]);
+    assert!(!state.select_button(8));
+    assert_eq!(recorder.names(), vec!["mode-changed", "selection-changed"]);
+}
+
+#[test]
 fn set_timing_accepts_only_the_three_camel_case_fields() {
     let dir = tempdir().unwrap();
     let state = state_in(&dir);

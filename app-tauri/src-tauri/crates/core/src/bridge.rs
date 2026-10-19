@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::{import_legacy, ConfigStore, ImportError, ImportReport};
 use crate::config_paths::legacy_config_dir;
+use crate::device::manager::DeviceManager;
 use crate::device::{DeviceEvent, TransportKind};
 use crate::state::AppState;
 
@@ -76,10 +77,11 @@ pub fn run_import_from_legacy_dir(
     Ok(report)
 }
 
-/// Build the current snapshot consumed by the future frontend.
+/// Build the current snapshot consumed by the frontend.
 pub fn state_snapshot(state: &AppState) -> Value {
     json!({
         "config": state.config(),
+        "configPath": state.store().config_path().display().to_string(),
         "modeIndex": state.mode_index(),
         "selectedIndex": state.selected_index(),
         "dirty": state.is_dirty(),
@@ -103,4 +105,17 @@ pub fn state_snapshot(state: &AppState) -> Value {
         },
         "installedAppsCount": state.installed_apps_count()
     })
+}
+
+/// Persist the working configuration, then push the timings to the pad.
+///
+/// The disk write decides the result: the firmware sync that follows is
+/// best-effort, so a disconnected or unreachable device can never turn a
+/// successful save into a reported failure — and a failed write never syncs.
+pub async fn save_config(state: &AppState, manager: &DeviceManager) -> bool {
+    if !state.save() {
+        return false;
+    }
+    let _ = manager.sync_timings(&state.config()).await;
+    true
 }

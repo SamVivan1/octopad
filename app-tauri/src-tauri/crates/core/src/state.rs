@@ -12,7 +12,10 @@
 //!   `activePreset`; `dirty-changed` is emitted only when the flag flips;
 //! - `set_label`/`set_action`/`set_timing`/`add_action`/`remove_action`/
 //!   `move_action` always emit their event (only *dirty* is flip-gated);
-//! - `set_mode`/`select_button` early-return without an event when unchanged;
+//! - `set_mode`/`select_button` early-return without an event when unchanged
+//!   and **reject** indices outside the current mode/button bounds without
+//!   touching the config or the event stream (the UI may only address a mode
+//!   or button that exists);
 //! - status setters dedupe (no event when the value is unchanged);
 //! - `mode_index` always starts at 0 regardless of the stored `activeModeIndex`;
 //! - subscriber callbacks run **outside** the internal locks.
@@ -451,9 +454,12 @@ impl AppState {
 
     /// Replace the action at `index` in the trigger slot, appending beyond the
     /// end (Python `state.set_action`).
-    pub fn set_action(&self, trigger: &str, index: i64, action: Action) {
+    ///
+    /// Returns `false` for a trigger outside `single`/`double`/`hold`, leaving
+    /// the button untouched and emitting nothing.
+    pub fn set_action(&self, trigger: &str, index: i64, action: Action) -> bool {
         if !is_trigger(trigger) {
-            return;
+            return false;
         }
         let mut events = Vec::new();
         {
@@ -470,12 +476,15 @@ impl AppState {
             push_button_changed(&mut inner, &mut events);
         }
         self.dispatch(events);
+        true
     }
 
     /// Append an action to the trigger slot (defaults to `none`).
-    pub fn add_action(&self, trigger: &str, action: Option<Action>) {
+    ///
+    /// Returns `false` for an unknown trigger (no mutation, no event).
+    pub fn add_action(&self, trigger: &str, action: Option<Action>) -> bool {
         if !is_trigger(trigger) {
-            return;
+            return false;
         }
         let mut events = Vec::new();
         {
@@ -486,12 +495,15 @@ impl AppState {
             push_button_changed(&mut inner, &mut events);
         }
         self.dispatch(events);
+        true
     }
 
     /// Remove the action at `index`; the slot always keeps at least one `none`.
-    pub fn remove_action(&self, trigger: &str, index: i64) {
+    ///
+    /// Returns `false` for an unknown trigger (no mutation, no event).
+    pub fn remove_action(&self, trigger: &str, index: i64) -> bool {
         if !is_trigger(trigger) {
-            return;
+            return false;
         }
         let mut events = Vec::new();
         {
@@ -509,13 +521,17 @@ impl AppState {
             push_button_changed(&mut inner, &mut events);
         }
         self.dispatch(events);
+        true
     }
 
     /// Move an action within the trigger slot; out-of-range moves are silent
     /// no-ops (no event, matching `state.py`).
-    pub fn move_action(&self, trigger: &str, index: i64, delta: i64) {
+    ///
+    /// Returns `false` only for an unknown trigger; an out-of-range *index* is
+    /// a successful no-op that still matches the Python early return.
+    pub fn move_action(&self, trigger: &str, index: i64, delta: i64) -> bool {
         if !is_trigger(trigger) {
-            return;
+            return false;
         }
         let mut events = Vec::new();
         {
@@ -524,13 +540,14 @@ impl AppState {
             let len = actions.len() as i64;
             let target = index + delta;
             if index < 0 || index >= len || target < 0 || target >= len {
-                return;
+                return true;
             }
             actions.swap(index as usize, target as usize);
             set_actions(button_mut(&mut inner), trigger, actions);
             push_button_changed(&mut inner, &mut events);
         }
         self.dispatch(events);
+        true
     }
 
     /// Update a timing field; only the three camelCase keys are accepted, any
@@ -560,32 +577,51 @@ impl AppState {
     }
 
     /// Switch the active mode (no event when unchanged; not an edit).
-    pub fn set_mode(&self, index: i64) {
+    ///
+    /// Returns `false` for an index outside the configured modes: nothing is
+    /// mutated and nothing is emitted, so a stale UI selection can never route
+    /// a later edit to a mode that does not exist. A valid index equal to the
+    /// current one is a successful no-op.
+    pub fn set_mode(&self, index: i64) -> bool {
         let mut events = Vec::new();
         {
             let mut inner = self.lock_mut();
+            if index < 0 || index >= inner.config.modes.len() as i64 {
+                return false;
+            }
             if index == inner.mode_index {
-                return;
+                return true;
             }
             inner.mode_index = index;
             inner.config.active_mode_index = index;
             events.push(AppEvent::ModeChanged { mode_index: index });
         }
         self.dispatch(events);
+        true
     }
 
     /// Select the button being edited (no event when unchanged).
-    pub fn select_button(&self, index: i64) {
+    ///
+    /// Returns `false` for an index outside the **current** mode's buttons:
+    /// nothing is mutated and nothing is emitted, so a subsequent edit can
+    /// never land on a different button than the one that was clicked. A valid
+    /// index equal to the current one is a successful no-op.
+    pub fn select_button(&self, index: i64) -> bool {
         let mut events = Vec::new();
         {
             let mut inner = self.lock_mut();
+            let button_count = mode_ref(&inner).buttons.len() as i64;
+            if index < 0 || index >= button_count {
+                return false;
+            }
             if index == inner.selected_index {
-                return;
+                return true;
             }
             inner.selected_index = index;
             events.push(AppEvent::SelectionChanged { index });
         }
         self.dispatch(events);
+        true
     }
 
     /// Save the working config to disk and make it the new saved baseline.

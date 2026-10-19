@@ -1,12 +1,17 @@
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use octopad_core::bridge::{connect_device_events, run_import_from_legacy_dir};
 use octopad_core::config::{default_config, ConfigStore};
+use octopad_core::device::manager::{DeviceManager, DeviceTransport};
 use octopad_core::device::{DeviceEvent, TransportKind};
 use octopad_core::state::{AppEvent, AppState};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tempfile::tempdir;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
 
 #[derive(Clone, Default)]
 struct EventRecorder(Arc<Mutex<Vec<AppEvent>>>);
@@ -14,6 +19,10 @@ struct EventRecorder(Arc<Mutex<Vec<AppEvent>>>);
 impl EventRecorder {
     fn events(&self) -> Vec<AppEvent> {
         self.0.lock().unwrap().clone()
+    }
+
+    fn clear(&self) {
+        self.0.lock().unwrap().clear();
     }
 
     fn callback(&self) -> impl Fn(AppEvent) + Send + Sync + 'static {
@@ -24,6 +33,121 @@ impl EventRecorder {
 
 fn state_in(path: &std::path::Path) -> Arc<AppState> {
     Arc::new(AppState::new(ConfigStore::at(path.join("OctoPad"))))
+}
+
+// ---------------------------------------------------------------------------
+// Injectable transports (mirrors `tests/device_manager.rs`, plus an on-disk
+// probe so a test can prove *when* a command left the app)
+// ---------------------------------------------------------------------------
+
+/// Records every command routed to it as `(command, probe_existed_on_send)`.
+///
+/// The probe answer is what pins the save-before-sync ordering: the config file
+/// is only on disk once the store write has completed.
+#[derive(Clone)]
+struct RecordingTransport {
+    connected: bool,
+    sends: Arc<Mutex<Vec<(String, bool)>>>,
+    probe: Option<PathBuf>,
+    events: Vec<DeviceEvent>,
+}
+
+impl RecordingTransport {
+    fn new(connected: bool, events: Vec<DeviceEvent>, probe: Option<PathBuf>) -> Self {
+        Self {
+            connected,
+            sends: Arc::new(Mutex::new(Vec::new())),
+            probe,
+            events,
+        }
+    }
+
+    fn sends(&self) -> Vec<(String, bool)> {
+        self.sends.lock().unwrap().clone()
+    }
+}
+
+impl DeviceTransport for RecordingTransport {
+    fn send_command<'a>(
+        &'a self,
+        command: &'a str,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            if !self.connected {
+                return false;
+            }
+            let probe_existed = self.probe.as_deref().is_some_and(Path::exists);
+            self.sends
+                .lock()
+                .unwrap()
+                .push((command.to_string(), probe_existed));
+            true
+        })
+    }
+
+    fn spawn(
+        &self,
+        tx: mpsc::Sender<DeviceEvent>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> JoinHandle<()> {
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            for event in events {
+                if tx.send(event).await.is_err() {
+                    return;
+                }
+            }
+            if !*shutdown.borrow() {
+                let _ = shutdown.changed().await;
+            }
+        })
+    }
+}
+
+struct RunningManager {
+    manager: DeviceManager,
+    events: mpsc::Receiver<DeviceEvent>,
+    shutdown: watch::Sender<bool>,
+    task: JoinHandle<()>,
+}
+
+fn status(transport: TransportKind, connected: bool) -> DeviceEvent {
+    DeviceEvent::StatusChanged {
+        transport,
+        connected,
+        port: None,
+        message: None,
+    }
+}
+
+fn start_manager(serial: RecordingTransport, ble: RecordingTransport) -> RunningManager {
+    let manager = DeviceManager::with_transports(Arc::new(serial), Arc::new(ble));
+    let (event_tx, events) = mpsc::channel(32);
+    let (shutdown, shutdown_rx) = watch::channel(false);
+    let task = manager.spawn(event_tx, shutdown_rx);
+    RunningManager {
+        manager,
+        events,
+        shutdown,
+        task,
+    }
+}
+
+async fn stop_manager(running: RunningManager) {
+    running.shutdown.send(true).unwrap();
+    running.task.await.unwrap();
+}
+
+/// Drain until `transport` reports itself connected, so a later assertion is
+/// not racing the manager's own status merge.
+async fn wait_for_connected(events: &mut mpsc::Receiver<DeviceEvent>, transport: TransportKind) {
+    let expected = status(transport, true);
+    while let Some(event) = events.recv().await {
+        if event == expected {
+            return;
+        }
+    }
+    panic!("manager stopped before reporting a connected {transport:?} transport");
 }
 
 #[tokio::test]
@@ -183,4 +307,121 @@ fn state_snapshot_contains_config_and_connection_statuses() {
     assert_eq!(snapshot["serial"]["connected"], Value::from(false));
     assert_eq!(snapshot["ble"]["connected"], Value::from(false));
     assert_eq!(snapshot["device"]["name"], Value::Null);
+}
+
+#[test]
+fn state_snapshot_exposes_the_config_path() {
+    let temp = tempdir().unwrap();
+    let state = state_in(temp.path());
+
+    let snapshot = octopad_core::bridge::state_snapshot(&state);
+
+    assert_eq!(
+        snapshot["configPath"],
+        Value::from(state.store().config_path().to_string_lossy().to_string())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// bridge::save_config — persist first, device sync only afterwards
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn save_config_persists_before_syncing_timings_and_clears_dirty() {
+    let temp = tempdir().unwrap();
+    let store = ConfigStore::at(temp.path().join("OctoPad"));
+    let state = AppState::new(store.clone());
+    let recorder = EventRecorder::default();
+    let _subscription = state.subscribe(recorder.callback());
+    state.set_timing("debounceMs", 40);
+    state.set_timing("clickTimeoutMs", 260);
+    state.set_timing("holdTimeoutMs", 460);
+    assert!(state.is_dirty());
+
+    // Only BLE is connected: the manager's automatic post-connect serial push
+    // cannot be confused with the sync this save performs.
+    let serial = RecordingTransport::new(false, vec![status(TransportKind::Serial, false)], None);
+    let ble = RecordingTransport::new(
+        true,
+        vec![status(TransportKind::Ble, true)],
+        Some(store.config_path()),
+    );
+    let mut running = start_manager(serial.clone(), ble.clone());
+    wait_for_connected(&mut running.events, TransportKind::Ble).await;
+    recorder.clear();
+
+    assert!(octopad_core::bridge::save_config(&state, &running.manager).await);
+
+    // `true` in the probe column: the config file was already on disk when the
+    // transport received the command, i.e. the write precedes the sync.
+    assert_eq!(ble.sends(), vec![("TIMING:40,260,460".to_string(), true)]);
+    assert!(serial.sends().is_empty());
+    assert!(!state.is_dirty());
+    assert!(!state.has_changes());
+    assert_eq!(
+        recorder.events(),
+        vec![
+            AppEvent::DirtyChanged { dirty: false },
+            AppEvent::ConfigSaved {
+                ok: true,
+                preset: None
+            }
+        ]
+    );
+    assert_eq!(store.load_config().debounce_ms, json!(40));
+    stop_manager(running).await;
+}
+
+#[tokio::test]
+async fn save_config_succeeds_when_no_transport_is_connected() {
+    let temp = tempdir().unwrap();
+    let store = ConfigStore::at(temp.path().join("OctoPad"));
+    let state = AppState::new(store.clone());
+    state.set_label("Offline Edit");
+
+    // Never spawned, so no transport can report itself connected.
+    let manager = DeviceManager::with_transports(
+        Arc::new(RecordingTransport::new(false, Vec::new(), None)),
+        Arc::new(RecordingTransport::new(false, Vec::new(), None)),
+    );
+
+    assert!(octopad_core::bridge::save_config(&state, &manager).await);
+    assert!(!state.is_dirty());
+    assert!(!state.has_changes());
+    assert_eq!(
+        store.load_config().modes[0].buttons[0].label,
+        "Offline Edit"
+    );
+}
+
+#[tokio::test]
+async fn save_config_never_syncs_timings_when_the_storage_write_fails() {
+    let temp = tempdir().unwrap();
+    let store = ConfigStore::at(temp.path().join("OctoPad"));
+    // A directory at the config path makes every store write fail.
+    std::fs::create_dir_all(store.config_path()).unwrap();
+    let state = AppState::new(store.clone());
+    state.set_timing("debounceMs", 40);
+    assert!(state.is_dirty());
+
+    let serial = RecordingTransport::new(false, vec![status(TransportKind::Serial, false)], None);
+    let ble = RecordingTransport::new(
+        true,
+        vec![status(TransportKind::Ble, true)],
+        Some(store.config_path()),
+    );
+    let mut running = start_manager(serial.clone(), ble.clone());
+    wait_for_connected(&mut running.events, TransportKind::Ble).await;
+
+    assert!(!octopad_core::bridge::save_config(&state, &running.manager).await);
+    assert!(
+        ble.sends().is_empty(),
+        "a failed save must not sync timings"
+    );
+    assert!(serial.sends().is_empty());
+    assert!(
+        state.is_dirty(),
+        "a failed save must leave the working config dirty"
+    );
+    stop_manager(running).await;
 }
