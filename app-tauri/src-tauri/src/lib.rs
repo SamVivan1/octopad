@@ -73,6 +73,20 @@ fn tray_connection_status(state: &AppState) -> String {
     "Disconnected".to_string()
 }
 
+fn spawn_device_runtime(
+    manager: DeviceManager,
+    device_tx: mpsc::Sender<octopad_core::device::DeviceEvent>,
+    shutdown: watch::Receiver<bool>,
+    state: Arc<AppState>,
+    device_rx: mpsc::Receiver<octopad_core::device::DeviceEvent>,
+) -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        let manager_task = manager.spawn(device_tx, shutdown);
+        let event_task = bridge::connect_device_events(state, device_rx);
+        let _ = tokio::join!(manager_task, event_task);
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -169,8 +183,7 @@ pub fn run() {
                 return Err("failed to initialize app runtime state".into());
             }
 
-            manager.spawn(device_tx, shutdown_rx);
-            bridge::connect_device_events(state, device_rx);
+            spawn_device_runtime(manager, device_tx, shutdown_rx, state, device_rx);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -206,4 +219,27 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_tasks_start_from_the_synchronous_setup_context() {
+        let (device_tx, device_rx) = mpsc::channel(8);
+        let (shutdown, shutdown_rx) = watch::channel(true);
+        let state = Arc::new(AppState::new(ConfigStore::new_app()));
+        let task = spawn_device_runtime(
+            DeviceManager::new(),
+            device_tx,
+            shutdown_rx,
+            state,
+            device_rx,
+        );
+
+        tauri::async_runtime::block_on(task)
+            .expect("device runtime supervisor should stop cleanly");
+        assert!(*shutdown.borrow());
+    }
 }
