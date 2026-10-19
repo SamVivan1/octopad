@@ -897,16 +897,47 @@ describe('action list structure', () => {
     ).toBe(true);
   });
 
-  it('keeps at least one action per trigger', async () => {
+  it('clears a single-action slot to none — the button always answers', async () => {
+    withSingleSlot([{ type: 'none' }]);
+    await renderEditor();
+
+    // The owner's story: a slot with only one action used to dead-end its ✕.
+    const remove = within(actionCards('single')[0]).getByTestId('action-remove') as HTMLButtonElement;
+    expect(remove.disabled).toBe(false);
+    // Single slots clear, multi slots remove — the tooltip says which.
+    expect(remove.title).toBe('Clear to None');
+    expect(
+      (within(actionCards('double')[0]).getByTestId('action-remove') as HTMLButtonElement).title
+    ).toBe('Remove this action');
+
+    // Change the slot's only action none → shortcut, then clear it.
+    await fireEvent.change(cardControl('single', 0, 'action-type'), {
+      target: { value: 'shortcut' },
+    });
+    await flush();
+    expect(actionTypes('single')).toEqual(['shortcut']);
+
+    const cleared = within(actionCards('single')[0]).getByTestId('action-remove');
+    await fireEvent.click(cleared);
+    await flush();
+
+    expect(invokeMock).toHaveBeenCalledWith('remove_action_cmd', { trigger: 'single', index: 0 });
+    // The core never empties a slot: the last survivor is replaced with `none`.
+    expect(actionCards('single')).toHaveLength(1);
+    expect(actionTypes('single')).toEqual(['none']);
+    expect(currentSnapshot.config.modes[0].buttons[0].single).toEqual({ type: 'none' });
+  });
+
+  it('keeps at least one action per trigger when the last one is cleared', async () => {
     await renderEditor();
 
     const remove = within(actionCards('hold')[0]).getByTestId('action-remove') as HTMLButtonElement;
-    expect(remove.disabled).toBe(true);
+    expect(remove.disabled).toBe(false);
 
     await fireEvent.click(remove);
     await flush();
 
-    expect(setActionCalls('remove_action_cmd')).toEqual([]);
+    expect(invokeMock).toHaveBeenCalledWith('remove_action_cmd', { trigger: 'hold', index: 0 });
     expect(actionCards('hold')).toHaveLength(1);
     expect(currentSnapshot.config.modes[0].buttons[0].hold).toEqual({ type: 'none' });
   });

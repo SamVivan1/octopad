@@ -33,8 +33,9 @@
   const label = $derived(actionTypeLabel(action.type));
   const canMoveUp = $derived(index > 0);
   const canMoveDown = $derived(index < total - 1);
-  /** The core keeps one action per trigger, so the last one cannot be removed. */
-  const canRemove = $derived(total > 1);
+  /** A one-action slot is not removal but a clear: the core replaces the last
+   * survivor with `none` (`remove_action`), so its button must stay live. */
+  const singleAction = $derived(total === 1);
 
   const position = $derived(`${triggerCaption} action ${index + 1}`);
 
@@ -67,9 +68,10 @@
   }
 
   function remove(): void {
-    // The core always keeps one action per trigger. The control is disabled as
-    // well, but a programmatic click must not slip a rejected edit past it.
-    if (!canRemove) return;
+    // The slot never empties: the core replaces the last `none` survivor. The
+    // out-of-range check stands so a programmatic click cannot slip an index
+    // the core would silently ignore past the queue.
+    if (index < 0 || index >= total) return;
     void onEdit(() => runCommand(`remove ${position}`, () => api.removeAction(trigger, index)));
   }
 </script>
@@ -125,8 +127,7 @@
         type="button"
         class="btn action-card__control"
         data-testid="action-remove"
-        disabled={!canRemove}
-        title={canRemove ? 'Remove this action' : 'A trigger always keeps one action'}
+        title={singleAction ? 'Clear to None' : 'Remove this action'}
         onclick={remove}
       >
         ✕
