@@ -19,6 +19,10 @@
 
 pub mod runner;
 
+/// The ten built-in presets (`linux-app/system_actions.py:16`). Always
+/// compiled: the ids and the tool order are the same everywhere.
+pub mod system;
+
 /// Linux keyboard/text/media injection. Windows gets its own module in a later
 /// task; every other target falls back to [`NoInputInjector`].
 #[cfg(target_os = "linux")]
@@ -32,6 +36,8 @@ use serde_json::Value;
 use crate::config::model::Action;
 
 pub use runner::{CommandCall, RealCommandRunner, RecordingRunner};
+
+pub use system::{execute_system_preset, preset_by_id, SystemPreset, SYSTEM_PRESETS};
 
 #[cfg(target_os = "linux")]
 pub use input_linux::{InputTool, LinuxInjector};
@@ -258,12 +264,13 @@ fn dispatch(action: &Action, deps: &ExecDeps<'_>) -> Result<ActionOutcome, Strin
             Ok(deps.input.media(&media_key))
         }
         "bash_script" => bash_script(extra.get("script"), deps),
-        // The ten presets are dispatched here as of Task 3; until then every id
-        // is unknown and says so.
-        "system_action" => Ok(ActionOutcome::fail(format!(
-            "Unknown system action: {}",
-            string_field(extra, "presetId", "")?
-        ))),
+        // The ten built-in presets (`exec::system`); an id that is not in the
+        // table keeps this exact message, so a stale config stays visible.
+        "system_action" => Ok(system::execute_system_preset(
+            &string_field(extra, "presetId", "")?,
+            deps.runner,
+            deps.input,
+        )),
         // M3.2 types: visible failures, never a silent success.
         // `ha_service` is the legacy alias both Python apps route to the Home
         // Assistant branch (`elif action_type in ['home_assistant', 'ha_service']`),
