@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite';
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 // @ts-expect-error process is a node global
@@ -28,5 +29,12 @@ export default defineConfig(async () => ({
       // 3. tell vite to ignore watching `src-tauri`
       ignored: ['**/src-tauri/**']
     }
+  },
+
+  test: {
+    // Store + API unit tests only: no DOM is needed and every `@tauri-apps`
+    // call is mocked, so the suite runs in a plain node environment.
+    environment: 'node',
+    include: ['src/**/*.test.ts']
   }
 }));
