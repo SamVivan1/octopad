@@ -31,8 +31,14 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "resources/tray/octopad-tray.png": "tray/octopad-tray.png",
+      "resources/tray/octopad-tray-checking.png": "tray/octopad-tray-checking.png",
+      "resources/tray/octopad-tray-off.png": "tray/octopad-tray-off.png"
+    }
   }
 }
