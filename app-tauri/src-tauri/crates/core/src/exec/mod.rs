@@ -27,10 +27,18 @@ pub mod chain;
 /// compiled: the ids and the tool order are the same everywhere.
 pub mod system;
 
-/// Linux keyboard/text/media injection. Windows gets its own module in a later
-/// task; every other target falls back to [`NoInputInjector`].
+/// Linux keyboard/text/media injection. Every other target falls back to
+/// [`NoInputInjector`].
 #[cfg(target_os = "linux")]
 pub mod input_linux;
+
+/// Windows keyboard/text/media injection.
+///
+/// Compiled on **every** target: the virtual-key tables and the event order
+/// are pure, so the Linux CI job pins them, while the `SendInput` calls sit
+/// behind `#[cfg(windows)]` and are only compiled and tested by the Windows
+/// CI job.
+pub mod input_windows;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -50,6 +58,9 @@ pub use system::{execute_system_preset, preset_by_id, SystemPreset, SYSTEM_PRESE
 
 #[cfg(target_os = "linux")]
 pub use input_linux::{InputTool, LinuxInjector};
+
+#[cfg(target_os = "windows")]
+pub use input_windows::WindowsInjector;
 
 /// Result of one action: the verdict plus the exact console text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,17 +154,25 @@ impl InputInjector for NoInputInjector {
 }
 
 /// The injector this platform should use: the Linux tool chain when one of
-/// wtype/ydotool/xdotool is installed, and the honest [`NoInputInjector`] when
-/// it is not (so a missing tool is a visible failure, never a silent success).
+/// wtype/ydotool/xdotool is installed, the Windows injector (always, because
+/// `SendInput` is part of `user32`), and the honest [`NoInputInjector`]
+/// everywhere else — so a missing tool is a visible failure, never a silent
+/// success.
 ///
-/// Borrows the runner, because that is how it detects and runs the tool.
+/// Borrows the runner, because that is how Linux detects and runs its tool.
 pub fn platform_input_injector<'a>(runner: &'a dyn CommandRunner) -> Box<dyn InputInjector + 'a> {
     #[cfg(target_os = "linux")]
     if let Some(injector) = input_linux::LinuxInjector::detect(runner) {
         return Box::new(injector);
     }
-    #[cfg(not(target_os = "linux"))]
+    // Windows has nothing to probe — `SendInput` is part of user32 — so it
+    // takes the runner only to keep this one signature on every platform.
     let _ = runner;
+    #[cfg(target_os = "windows")]
+    return Box::new(input_windows::WindowsInjector::new());
+    // Reached on Linux when no tool is installed and on every other target:
+    // the honest fallback, not a pretend success.
+    #[cfg(not(target_os = "windows"))]
     Box::new(NoInputInjector)
 }
 
