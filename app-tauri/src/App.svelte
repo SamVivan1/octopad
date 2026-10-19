@@ -1,22 +1,12 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
-  let version = '';
-
-  async function getVersion() {
-    version = await invoke('get_version');
-  }
-
-  getVersion();
+  /**
+   * Application root.
+   *
+   * Deliberately thin: the shell owns startup, cleanup and navigation, and every
+   * page is a view over the shared stores. The M0 placeholder that used to live
+   * here (a direct `get_version` call) is gone.
+   */
+  import AppShell from './lib/components/AppShell.svelte';
 </script>
 
-<main class="container">
-  <h1>OctoPad Tauri M0 scaffold</h1>
-  <p>Version: {version}</p>
-</main>
-
-<style>
-  .container {
-    font-family: system-ui, -apple-system, sans-serif;
-    padding: 2rem;
-  }
-</style>
+<AppShell />

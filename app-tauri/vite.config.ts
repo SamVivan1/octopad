@@ -9,6 +9,11 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [svelte()],
 
+  // Vitest resolves modules with Node's export conditions by default, which
+  // would pull in Svelte's *server* entry point and break `mount`/`onMount` in
+  // the DOM tests. Opting into the browser conditions keeps the client build.
+  resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors
@@ -32,8 +37,10 @@ export default defineConfig(async () => ({
   },
 
   test: {
-    // Store + API unit tests only: no DOM is needed and every `@tauri-apps`
-    // call is mocked, so the suite runs in a plain node environment.
+    // Store + API unit tests need no DOM and every `@tauri-apps` call is mocked,
+    // so the default environment is plain node. Component tests opt into jsdom
+    // per file with a `// @vitest-environment jsdom` pragma, which keeps the
+    // store suite DOM-free.
     environment: 'node',
     include: ['src/**/*.test.ts']
   }
