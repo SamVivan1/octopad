@@ -1003,8 +1003,22 @@ fn actions_of(button: &Button, trigger: &str) -> Vec<Action> {
 }
 
 /// Write a trigger slot back, reusing the shared `TriggerActions` shape helpers.
+///
+/// A slot that was already a list stays a list even when it is edited down to a
+/// single action: `from_list` would collapse it to the legacy object shape and
+/// silently rewrite the user's config file from an array to an object.
 fn set_actions(button: &mut Button, trigger: &str, actions: Vec<Action>) {
-    let slot = TriggerActions::from_list(actions);
+    let preserve_list_shape = match trigger {
+        "single" => matches!(&button.single, TriggerActions::Many(_)),
+        "double" => matches!(&button.double, TriggerActions::Many(_)),
+        "hold" => matches!(&button.hold, TriggerActions::Many(_)),
+        _ => false,
+    };
+    let slot = if preserve_list_shape {
+        TriggerActions::Many(actions)
+    } else {
+        TriggerActions::from_list(actions)
+    };
     match trigger {
         "single" => button.single = slot,
         "double" => button.double = slot,

@@ -2,7 +2,7 @@
 //! emission rules and the subscriber event bus, ported from `linux-app/state.py`
 //! (minus GTK/GLib).
 
-use octopad_core::config::{default_action, default_config, ConfigStore};
+use octopad_core::config::{default_action, default_config, ConfigStore, TriggerActions};
 use octopad_core::state::{AppEvent, AppState};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -189,6 +189,25 @@ fn set_action_replaces_at_index_and_appends_beyond_the_end() {
     assert_eq!(actions.len(), 2);
     assert_eq!(actions[0].action_type, "text");
     assert_eq!(actions[1].action_type, "none");
+}
+
+#[test]
+fn set_action_preserves_single_item_list_trigger_shape() {
+    let dir = tempdir().unwrap();
+    let store = store_in(&dir);
+    let mut config = default_config();
+    config.modes[0].buttons[0].single = TriggerActions::Many(vec![default_action("text")]);
+    store.save_config(&config).unwrap();
+    let state = AppState::new(store);
+
+    state.set_action("single", 0, default_action("media"));
+
+    let saved_shape = serde_json::to_value(state.config()).unwrap();
+    assert!(saved_shape["modes"][0]["buttons"][0]["single"].is_array());
+    assert_eq!(
+        saved_shape["modes"][0]["buttons"][0]["single"][0]["type"],
+        "media"
+    );
 }
 
 #[test]
