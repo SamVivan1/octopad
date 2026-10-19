@@ -3,6 +3,7 @@ pub mod config;
 pub mod config_paths;
 pub mod device;
 pub mod exec;
+pub mod ha;
 pub mod platform;
 pub mod proto;
 pub mod state;
