@@ -58,8 +58,16 @@ with `gh run download <run-id> -n octopad-tauri-windows-bundle`.
 | Run | Commit | Outcome | Note |
 | --- | --- | --- | --- |
 | 39220766140 | `a4d29cb` | failed | core tests failed on Windows: `m0_serial_spike_paths_still_resolve` asserted a `/dev/ttyUSB0` sample, but `candidate_ports` filters per platform. Fixed in `3c6edac`. |
-| 39221969175 | `3c6edac` | see below | Windows-only run of the platform-aware test fix |
-| 39222107467 | `39dd3b6` | see below | first run with all three jobs |
+| 39221969175 | `3c6edac` | Windows green | proved the platform-aware test fix |
+| 39222107467 | `39dd3b6` | windows green, linux/debian failed | `libudev-sys` could not find `libudev.pc`; the Debian container's `rustc` was invisible because `$GITHUB_PATH` only affects later steps |
+| 39223514318 | `111c91e` | linux/debian failed | `libsystemd-dev` was the wrong package — `libudev.pc` ships in `libudev-dev` |
+| 39224744214 | `3ff6257` | windows + linux green, debian failed | every declared `.deb` dependency resolved on Debian 12; only `apt-get install` failed because apt read the relative path as a package name |
+| **39226319402** | **`919d67b`** | **all three green** | first fully green run: Ubuntu builds `.deb` + AppImage, Debian 12 installs the package, Windows builds NSIS + MSI |
+
+Three of those failures were CI-only configuration problems (a missing system
+package twice, and a shell mistake inside a check), never product bugs. The one
+real cross-platform problem it caught — a Linux-only assertion in a test — was
+found the day the job was added.
 
 ## Automated (run here, 2026-10-19)
 
