@@ -16,6 +16,7 @@
    *    edit go through one queue, so a fast click cannot route an edit to the
    *    previously selected key: the edit waits for the in-flight selection.
    */
+  import ActionInspector from '../components/ActionInspector.svelte';
   import KeyGrid from '../components/KeyGrid.svelte';
   import ModeSwitch from '../components/ModeSwitch.svelte';
   import * as api from '../api';
@@ -64,12 +65,17 @@
   /**
    * The only way edits reach the core.
    *
-   * The action editor and label editor of the next task call this instead of
-   * `api` directly, which is what guarantees their command is issued *after* any
-   * selection the user triggered a moment earlier.
+   * The action editor and the label editor call this instead of `api` directly,
+   * which is what guarantees their command is issued *after* any selection the
+   * user triggered a moment earlier.
    */
   export async function runEdit<T>(command: () => Promise<T>): Promise<T> {
     return enqueue(command);
+  }
+
+  /** Rename the key on screen, through the same queue as every other edit. */
+  async function renameKey(text: string): Promise<void> {
+    await enqueue(() => runCommand('set the key label', () => api.setLabel(text)));
   }
 </script>
 
@@ -99,15 +105,13 @@
 
   <!--
     The inspector slot. It is a scroll container so a long action list never
-    stretches the grid, and the action editor takes it over in the next task.
+    stretches the grid, and every edit it makes goes through the same command
+    queue as the grid above, so it can never land on a different key than the
+    one on screen.
   -->
   <div class="card buttons__inspector" data-testid="buttons-inspector">
     <h2 class="section-title">Key {selectedIndex + 1} — {selectedLabel}</h2>
-    <p class="muted">
-      Single, double and hold actions for this key are edited here. The action editor arrives in
-      the next task; every edit it makes goes through the same command queue as the grid, so it can
-      never land on a different key than the one on screen.
-    </p>
+    <ActionInspector button={selectedButton} onLabel={renameKey} onEdit={runEdit} />
   </div>
 </section>
 
@@ -130,7 +134,7 @@
   }
 
   .buttons__inspector {
-    max-height: 320px;
+    max-height: 420px;
     overflow-y: auto;
   }
 
