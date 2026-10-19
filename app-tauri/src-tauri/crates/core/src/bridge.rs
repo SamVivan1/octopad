@@ -16,8 +16,21 @@ use crate::state::AppState;
 /// Consume transport events and apply their state/event effects.
 pub fn connect_device_events(
     state: Arc<AppState>,
-    mut rx: mpsc::Receiver<DeviceEvent>,
+    rx: mpsc::Receiver<DeviceEvent>,
 ) -> JoinHandle<()> {
+    connect_device_events_with_handler(state, rx, |_, _, _| {})
+}
+
+/// Consume transport events, apply their state effects, then forward button
+/// events to an optional application-level handler.
+pub fn connect_device_events_with_handler<F>(
+    state: Arc<AppState>,
+    mut rx: mpsc::Receiver<DeviceEvent>,
+    on_button_event: F,
+) -> JoinHandle<()>
+where
+    F: Fn(String, i64, String) + Send + Sync + 'static,
+{
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
@@ -52,6 +65,7 @@ pub fn connect_device_events(
                         trigger.to_uppercase()
                     );
                     state.log(line);
+                    on_button_event(mode, index, trigger);
                 }
                 DeviceEvent::Error { message } => {
                     state.log(format!("[ERROR] {message}"));

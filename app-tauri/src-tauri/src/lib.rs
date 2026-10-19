@@ -1,8 +1,10 @@
+mod action_runtime;
+mod actions;
 mod commands;
 
 use std::sync::Arc;
 
-use octopad_core::bridge;
+use actions::{linux_action_executor, ActionExecutor};
 use octopad_core::config::{auto_import_legacy, ConfigStore};
 use octopad_core::device::manager::DeviceManager;
 use octopad_core::state::{AppEvent, AppState, Subscription};
@@ -79,10 +81,11 @@ fn spawn_device_runtime(
     shutdown: watch::Receiver<bool>,
     state: Arc<AppState>,
     device_rx: mpsc::Receiver<octopad_core::device::DeviceEvent>,
+    executor: Arc<dyn ActionExecutor>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let manager_task = manager.spawn(device_tx, shutdown);
-        let event_task = bridge::connect_device_events(state, device_rx);
+        let event_task = action_runtime::spawn_action_runtime(state, device_rx, executor);
         let _ = tokio::join!(manager_task, event_task);
     })
 }
@@ -128,6 +131,7 @@ pub fn run() {
             let manager = DeviceManager::new();
             let (device_tx, device_rx) = mpsc::channel(256);
             let (shutdown, shutdown_rx) = watch::channel(false);
+            let executor = linux_action_executor();
 
             let open_item = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let status_item = MenuItem::with_id(
@@ -175,6 +179,7 @@ pub fn run() {
 
             if !app.manage(state.clone())
                 || !app.manage(manager.clone())
+                || !app.manage(executor.clone())
                 || !app.manage(RuntimeControl {
                     shutdown: shutdown.clone(),
                 })
@@ -183,11 +188,13 @@ pub fn run() {
                 return Err("failed to initialize app runtime state".into());
             }
 
-            spawn_device_runtime(manager, device_tx, shutdown_rx, state, device_rx);
+            spawn_device_runtime(manager, device_tx, shutdown_rx, state, device_rx, executor);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_version,
+            actions::test_action_cmd,
+            actions::test_trigger_cmd,
             commands::spikes::spike_legacy_config_dir,
             commands::spikes::spike_list_ports,
             commands::spikes::spike_probe_hello,
@@ -236,6 +243,7 @@ mod tests {
             shutdown_rx,
             state,
             device_rx,
+            linux_action_executor(),
         );
 
         tauri::async_runtime::block_on(task)

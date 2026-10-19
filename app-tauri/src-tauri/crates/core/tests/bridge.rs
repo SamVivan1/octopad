@@ -206,6 +206,50 @@ async fn device_events_update_state_and_emit_serial_logs() {
 }
 
 #[tokio::test]
+async fn device_button_events_call_handler_after_logging() {
+    let temp = tempdir().unwrap();
+    let state = state_in(temp.path());
+    let recorder = EventRecorder::default();
+    let _subscription = state.subscribe(recorder.callback());
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let handler_events = observed.clone();
+    let handler_recorder = recorder.clone();
+    let (tx, rx) = mpsc::channel(16);
+    let task = octopad_core::bridge::connect_device_events_with_handler(
+        state,
+        rx,
+        move |mode, index, trigger| {
+            handler_events
+                .lock()
+                .unwrap()
+                .push((mode, index, trigger, handler_recorder.events()));
+        },
+    );
+
+    tx.send(DeviceEvent::ButtonEvent {
+        mode: "ha".to_string(),
+        index: 5,
+        trigger: "hold".to_string(),
+    })
+    .await
+    .unwrap();
+    drop(tx);
+    task.await.unwrap();
+
+    assert_eq!(
+        observed.lock().unwrap().as_slice(),
+        [(
+            "ha".to_string(),
+            5,
+            "hold".to_string(),
+            vec![AppEvent::SerialLog {
+                line: "[HA] Button 6 -> HOLD".to_string(),
+            }],
+        )]
+    );
+}
+
+#[tokio::test]
 async fn corrupt_legacy_import_keeps_config_and_state_events_untouched() {
     let temp = tempdir().unwrap();
     let store = ConfigStore::at(temp.path().join("OctoPad"));
