@@ -33,6 +33,34 @@ publishes what the platform reports (`null` = unknown), and every write is confi
 re-reading. A rejected write, or one the platform silently ignored, is reported as a failure
 and the control snaps back to the real platform state.
 
+## Task 9: CI and published artifacts
+
+The workflow is `.github/workflows/tauri.yml` ("Tauri Build & Test"). It runs
+on every push to `main` that touches `app-tauri/**`, and on pull requests for
+the same paths.
+
+| Job | Runner | What it proves | Artifact |
+| --- | --- | --- | --- |
+| `linux` | `ubuntu-latest` | frontend tests + type-check + build, core tests with `serial,ble`, workspace `cargo check`, release build | `octopad-tauri-linux-bundles` (`.deb` + AppImage) |
+| `debian` | `debian:bookworm` container | the `.deb`'s declared dependencies exist on Debian 12, the package installs cleanly, core tests pass there | — |
+| `windows` | `windows-latest` | the same checks plus the NSIS + MSI bundle | `octopad-tauri-windows-bundle` |
+
+Linux is the primary platform, so it is a first-class job rather than an
+afterthought; the Debian container job exists because most installations are on
+a Debian-derived distribution and `ubuntu-latest` cannot prove that the
+dependency set resolves there.
+
+Download a bundle from the run page (the green checkmark next to the job), or
+with `gh run download <run-id> -n octopad-tauri-windows-bundle`.
+
+### CI history
+
+| Run | Commit | Outcome | Note |
+| --- | --- | --- | --- |
+| 39220766140 | `a4d29cb` | failed | core tests failed on Windows: `m0_serial_spike_paths_still_resolve` asserted a `/dev/ttyUSB0` sample, but `candidate_ports` filters per platform. Fixed in `3c6edac`. |
+| 39221969175 | `3c6edac` | see below | Windows-only run of the platform-aware test fix |
+| 39222107467 | `39dd3b6` | see below | first run with all three jobs |
+
 ## Automated (run here, 2026-10-19)
 
 | Check | Command | Result |
