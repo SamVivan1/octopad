@@ -192,10 +192,18 @@ impl VolumeStep {
 
 /// `system_actions.py:472` — wpctl, else pactl, else plain ALSA.
 ///
-/// The two PulseAudio branches use the `@DEFAULT_AUDIO_SOURCE@` alias
-/// (`pactl` resolves it on pipewire-pulse and on PulseAudio ≥ 13); the sink
-/// branches below keep the shorter `@DEFAULT_SINK@` alias Python passes, which
-/// every PulseAudio understands.
+/// The aliases are **tool-specific**, and mixing them up fails silently:
+///
+/// ```text
+/// $ pactl get-source-mute @DEFAULT_SOURCE@        # -> Mute: yes
+/// $ pactl get-source-mute @DEFAULT_AUDIO_SOURCE@  # -> No such entity
+/// $ wpctl  get-volume @DEFAULT_AUDIO_SINK@        # -> Volume: 0.00 [MUTED]
+/// ```
+///
+/// `wpctl` understands the long `@DEFAULT_AUDIO_*` forms; `pactl` only knows the
+/// short `@DEFAULT_SOURCE@` / `@DEFAULT_SINK@` ones. So the wpctl branch uses the
+/// long alias and the pactl branch the short one — the pairing `system_actions.py`
+/// uses. Verified on this machine against PulseAudio on PipeWire 1.6.8.
 fn mic_toggle_mute(runner: &dyn CommandRunner) -> ActionOutcome {
     if installed(runner, "wpctl") {
         return run_tool(
@@ -209,7 +217,7 @@ fn mic_toggle_mute(runner: &dyn CommandRunner) -> ActionOutcome {
         return run_tool(
             runner,
             "pactl",
-            &["set-source-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"],
+            &["set-source-mute", "@DEFAULT_SOURCE@", "toggle"],
             "Toggled mic mute via pactl",
         );
     }

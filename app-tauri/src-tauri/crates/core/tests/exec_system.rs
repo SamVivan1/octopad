@@ -299,7 +299,11 @@ fn mic_toggle_mute_falls_back_to_pactl_without_wpctl() {
         shell.commands(),
         [waited(
             "pactl",
-            &["set-source-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"]
+            // NOT `@DEFAULT_AUDIO_SOURCE@`: that is the wpctl alias. Verified on
+            // this machine — `pactl get-source-mute @DEFAULT_AUDIO_SOURCE@`
+            // answers "No such entity", so using it here would make mic mute
+            // fail silently on any PulseAudio system that fell back to pactl.
+            &["set-source-mute", "@DEFAULT_SOURCE@", "toggle"]
         )]
     );
 }
