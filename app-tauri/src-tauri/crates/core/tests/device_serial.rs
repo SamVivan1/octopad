@@ -192,20 +192,66 @@ impl SerialConnection for FailingWriteConnection {
     fn close(&mut self) {}
 }
 
+/// The first session's fake link: it parks inside `read_line` until the test
+/// releases it, then reports the connection as dropped. Writes are recorded so
+/// the test can prove the queued command never reached this session.
 struct GatedDisconnectConnection {
-    gate: Arc<(Mutex<bool>, Condvar)>,
+    gate: Arc<DisconnectGate>,
+    writes: Arc<Mutex<Vec<String>>>,
+}
+
+/// Handshake between the test and [`GatedDisconnectConnection`]. `parked` is
+/// latched when the session blocks in its read — the one point where the
+/// transport provably cannot drain the command queue — and `released` drops
+/// the link. Both flags share one mutex and one condvar, so the test can wait
+/// for the session and then drop it without polling or sleeping.
+struct DisconnectGate {
+    state: Mutex<GateState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct GateState {
+    parked: bool,
+    released: bool,
+}
+
+impl DisconnectGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(GateState::default()),
+            changed: Condvar::new(),
+        })
+    }
+
+    /// Block until the session is parked in its read.
+    fn wait_until_parked(&self) {
+        let mut state = self.state.lock().unwrap();
+        while !state.parked {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    /// Drop the link, so the parked read returns an error.
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
 }
 
 impl SerialConnection for GatedDisconnectConnection {
-    fn write_line(&mut self, _line: &str) -> Result<(), SerialError> {
+    fn write_line(&mut self, line: &str) -> Result<(), SerialError> {
+        self.writes.lock().unwrap().push(line.to_string());
         Ok(())
     }
 
     fn read_line(&mut self) -> Result<Option<String>, SerialError> {
-        let (lock, changed) = &*self.gate;
-        let mut disconnect = lock.lock().unwrap();
-        while !*disconnect {
-            disconnect = changed.wait(disconnect).unwrap();
+        let mut state = self.gate.state.lock().unwrap();
+        state.parked = true;
+        self.gate.changed.notify_all();
+        while !state.released {
+            state = self.gate.changed.wait(state).unwrap();
         }
         Err(SerialError::Other("device disconnected".to_string()))
     }
@@ -421,11 +467,20 @@ async fn serial_command_reports_write_failure_instead_of_queue_acceptance() {
     );
 }
 
+/// A command queued while a session is alive must be dropped — never written,
+/// never reported as sent — when that session's connection dies before the
+/// write happens, and the reconnected session must start clean.
+///
+/// The `connected` status event only announces the session: like the Python
+/// listener it is emitted *before* the connect-time WHO/TIMING push, so neither
+/// write list is read at the event. Both are read once the transport task has
+/// stopped, which is a real happens-before edge instead of a timing guess.
 #[tokio::test]
 async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let gate = DisconnectGate::new();
+    let first_writes = Arc::new(Mutex::new(Vec::new()));
     let second_writes = Arc::new(Mutex::new(Vec::new()));
     let opens = Arc::new(AtomicUsize::new(0));
     let transport = SerialTransport::new()
@@ -439,11 +494,14 @@ async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
         .with_opener({
             let gate = gate.clone();
             let opens = opens.clone();
+            let first_writes = first_writes.clone();
             let second_writes = second_writes.clone();
             move |_port: &str| {
                 if opens.fetch_add(1, Ordering::SeqCst) == 0 {
-                    Ok(Box::new(GatedDisconnectConnection { gate: gate.clone() })
-                        as Box<dyn SerialConnection>)
+                    Ok(Box::new(GatedDisconnectConnection {
+                        gate: gate.clone(),
+                        writes: first_writes.clone(),
+                    }) as Box<dyn SerialConnection>)
                 } else {
                     Ok(Box::new(QuietConnection {
                         writes: second_writes.clone(),
@@ -467,15 +525,19 @@ async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
         })
     ));
 
+    // Wait until the transport is parked in the session's read. A queued
+    // command is only guaranteed to be dropped while the session sits there:
+    // earlier the transport is still free to answer it from the live
+    // connection, which is a different (and equally correct) scenario.
+    gate.wait_until_parked();
+
     let mut command = Box::pin(command_handle.send_command("NAME:Stale"));
     tokio::select! {
         biased;
         result = &mut command => panic!("command should wait for its session write: {result}"),
         _ = tokio::task::yield_now() => {}
     }
-    let (lock, changed) = &*gate;
-    *lock.lock().unwrap() = true;
-    changed.notify_one();
+    gate.release();
 
     let command_result = tokio::time::timeout(Duration::from_secs(2), &mut command)
         .await
@@ -494,7 +556,6 @@ async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
             break;
         }
     }
-    let reconnect_writes = second_writes.lock().unwrap().clone();
 
     shutdown_tx.send(true).unwrap();
     drop(rx);
@@ -502,10 +563,24 @@ async fn queued_serial_commands_are_discarded_when_their_connection_drops() {
         .await
         .expect("serial should stop after shutdown")
         .expect("transport task should not panic");
-    assert!(!command_result);
+
+    // Every connect pushes WHO and the configured timings, and nothing else:
+    // the dropped session must not have written the queued command, and the
+    // reconnected session must not have inherited it.
+    let connect_writes = vec!["WHO".to_string(), "TIMING:25,250,450".to_string()];
+    assert!(
+        !command_result,
+        "a command queued on a dropped connection must not report a successful write"
+    );
     assert_eq!(
-        reconnect_writes,
-        vec!["WHO".to_string(), "TIMING:25,250,450".to_string()]
+        *first_writes.lock().unwrap(),
+        connect_writes,
+        "the queued command must never reach the session that dropped"
+    );
+    assert_eq!(
+        *second_writes.lock().unwrap(),
+        connect_writes,
+        "the reconnected session must start clean"
     );
 }
 
