@@ -24,7 +24,7 @@ import type { Readable, Writable } from 'svelte/store';
 
 import * as api from './api';
 import { resetEditQueue } from './editQueue';
-import type { AppEventPayloads, AppSnapshot, TimingField } from './types';
+import type { AppEntry, AppEventPayloads, AppSnapshot, TimingField } from './types';
 
 /** Newest log lines kept in memory; older lines are dropped on append. */
 export const LOG_LIMIT = 1500;
@@ -44,6 +44,14 @@ export const logEntries: Writable<LogEntry[]> = writable<LogEntry[]>([]);
 
 /** User preset slugs (`list_presets_cmd`); M3 turns these into the gallery. */
 export const presets: Writable<string[]> = writable<string[]>([]);
+
+/**
+ * The scanned desktop applications, newest full list from the core only.
+ *
+ * Filled by the `apps-changed` event contract (`apps: AppEntry[]`) or by
+ * {@link listApplications} directly; the launch_app picker reads this.
+ */
+export const applications: Writable<AppEntry[]> = writable<AppEntry[]>([]);
 
 /** Last command/event failure, for the UI to surface. `null` means "no failure". */
 export const lastError: Writable<string | null> = writable<string | null>(null);
@@ -191,6 +199,43 @@ async function refreshPresets(): Promise<void> {
   }
 }
 
+// -- application list ---------------------------------------------------------
+
+/**
+ * Read the applications store through the command (`list_applications_cmd`).
+ *
+ * Patches the store from the command's return value as well: the command also
+ * emits `apps-changed`, so in the running app the event carries the same list —
+ * this wrapper just makes ordering explicit for a direct caller.
+ */
+export async function listApplications(): Promise<AppEntry[]> {
+  const apps = await api.listApplications();
+  applications.set(apps);
+  patch((snapshot) => ({ ...snapshot, installedAppsCount: apps.length }));
+  return apps;
+}
+
+let applicationsRequested = false;
+
+/**
+ * Scan once, on demand, without re-asking while a run is still healthy.
+ *
+ * Called when the launch_app picker becomes visible (the page calls the
+ * command on demand — an editor page must not scan every application
+ * directory just by being open). A failed scan surfaces in `lastError`, and
+ * the next ask retries instead of keeping the broken flag down.
+ */
+export async function ensureApplicationsLoaded(): Promise<void> {
+  if (applicationsRequested) return;
+  applicationsRequested = true;
+  try {
+    await listApplications();
+  } catch (error) {
+    applicationsRequested = false;
+    setError(`Could not list applications: ${describeError(error)}`);
+  }
+}
+
 // -- event handlers ----------------------------------------------------------
 
 function onDirtyChanged(payload: AppEventPayloads['octopad://dirty-changed']): void {
@@ -315,7 +360,25 @@ function onHaEntitiesChanged(payload: AppEventPayloads['octopad://ha-entities-ch
 }
 
 function onAppsChanged(payload: AppEventPayloads['octopad://apps-changed']): void {
-  const count = readNumber(asPayload(payload), 'count');
+  const data = asPayload(payload);
+  const list = data?.['apps'];
+  if (Array.isArray(list)) {
+    // The picker contract: the full scanned list. Fanned-out entries the
+    // reader cannot make sense of are dropped, never treated as a whole-list
+    // failure.
+    const apps: AppEntry[] = list.filter(
+      (app): app is AppEntry =>
+        typeof app === 'object' &&
+        app !== null &&
+        typeof (app as AppEntry).id === 'string' &&
+        typeof (app as AppEntry).name === 'string'
+    );
+    applications.set(apps);
+    patch((snapshot) => ({ ...snapshot, installedAppsCount: apps.length }));
+    return;
+  }
+  // The core's count-only `set_apps` shape, kept for either event source.
+  const count = readNumber(data, 'count');
   if (count === undefined) return;
   patch((snapshot) => ({ ...snapshot, installedAppsCount: count }));
 }
@@ -413,8 +476,10 @@ export function resetAppState(): void {
   appState.set(null);
   logEntries.set([]);
   presets.set([]);
+  applications.set([]);
   lastError.set(null);
   nextLogId = 0;
+  applicationsRequested = false;
   refreshChain = Promise.resolve();
   resetEditQueue();
 }

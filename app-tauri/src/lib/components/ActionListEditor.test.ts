@@ -597,24 +597,120 @@ describe('action field editors', () => {
     });
   });
 
-  it('edits the launch app name and path', async () => {
-    withSingleSlot([{ type: 'launch_app', appName: 'Terminal', desktopId: 'org.gnome.Terminal' }]);
+  it('selects a scanned app, writing desktopId and appName in one change', async () => {
+    overrides.set('list_applications_cmd', () =>
+      Promise.resolve([
+        { id: 'code.desktop', name: 'Visual Studio Code' },
+        { id: 'org.gnome.Terminal.desktop', name: 'Terminal' },
+      ])
+    );
+    withSingleSlot([{ type: 'launch_app', desktopId: 'code.desktop', appName: 'Visual Studio Code' }]);
     await renderEditor();
 
-    await setField('single', 0, 'appName', 'Console');
+    const select = cardControl('single', 0, 'app-select') as HTMLSelectElement;
+    expect(select.value).toBe('code.desktop');
+
+    // Pick another scanned app: one change event, one set_action_cmd, both
+    // wire keys written together.
+    fireEvent.change(field('single', 0, 'desktopId'), {
+      target: { value: 'org.gnome.Terminal.desktop' },
+    });
+    await flush();
+
+    expect((await lastSetAction()).action).toEqual({
+      type: 'launch_app',
+      desktopId: 'org.gnome.Terminal.desktop',
+      appName: 'Terminal',
+    });
+  });
+
+  it('falls back to Manual… when nothing is scanned and edits through its inputs', async () => {
+    // No `list_applications_cmd` override: the fake core resolves it, but the
+    // list arrives effectively empty for the picker.
+    overrides.set('list_applications_cmd', () => Promise.resolve([]));
+    withSingleSlot([{ type: 'launch_app' }]);
+    await renderEditor();
+
+    const select = cardControl('single', 0, 'app-select') as HTMLSelectElement;
+    expect(select.value).toBe('__manual__');
+
+    // Manual is revealed with empty inputs — placeholders only, nothing is
+    // auto-selected or auto-written by opening the editor.
+    const manual = cardControl('single', 0, 'app-manual');
+    const idInput = manual.querySelector('[data-field="desktopId"]') as HTMLInputElement;
+    const nameInput = manual.querySelector('[data-field="appName"]') as HTMLInputElement;
+    expect(idInput.value).toBe('');
+    expect(nameInput.value).toBe('');
+
+    await fireEvent.change(idInput, { target: { value: 'custom.app.desktop' } });
     await flush();
     expect((await lastSetAction()).action).toEqual({
       type: 'launch_app',
-      appName: 'Console',
-      desktopId: 'org.gnome.Terminal',
+      desktopId: 'custom.app.desktop',
     });
 
-    await setField('single', 0, 'desktopId', 'utilities-terminal');
+    await fireEvent.change(nameInput, { target: { value: 'Custom App' } });
     await flush();
     expect((await lastSetAction()).action).toEqual({
       type: 'launch_app',
-      appName: 'Console',
-      desktopId: 'utilities-terminal',
+      desktopId: 'custom.app.desktop',
+      appName: 'Custom App',
+    });
+  });
+
+  it('keeps a configured id that is not in the scan selectable and untouched', async () => {
+    overrides.set('list_applications_cmd', () =>
+      Promise.resolve([{ id: 'other.desktop', name: 'Other' }])
+    );
+    withSingleSlot([{ type: 'launch_app', desktopId: 'kept.desktop', appName: 'Kept App' }]);
+    await renderEditor();
+
+    const select = cardControl('single', 0, 'app-select') as HTMLSelectElement;
+    expect(select.value).toBe('kept.desktop');
+    // The unknown working config stays listed instead of being cleared.
+    expect(Array.from(select.options).map((option) => option.value)).toContain('kept.desktop');
+    // Merely opening the editor rewrites nothing.
+    expect(setActionCalls('set_action_cmd')).toEqual([]);
+    expect(currentSnapshot.config.modes[0].buttons[0].single).toEqual({
+      type: 'launch_app',
+      desktopId: 'kept.desktop',
+      appName: 'Kept App',
+    });
+  });
+
+  it('chooses Manual… without rewriting the configured action', async () => {
+    overrides.set('list_applications_cmd', () =>
+      Promise.resolve([{ id: 'code.desktop', name: 'Visual Studio Code' }])
+    );
+    withSingleSlot([{ type: 'launch_app', desktopId: 'custom.app.desktop', appName: 'Custom' }]);
+    await renderEditor();
+
+    fireEvent.change(field('single', 0, 'desktopId'), { target: { value: '__manual__' } });
+    await flush();
+
+    // Manual is a view choice, never an edit: the action stays as stored.
+    expect(setActionCalls('set_action_cmd')).toEqual([]);
+    // The manual inputs come back with the configured values intact.
+    const manual = cardControl('single', 0, 'app-manual') as HTMLElement;
+    expect((manual.querySelector('[data-field="desktopId"]') as HTMLInputElement).value).toBe(
+      'custom.app.desktop'
+    );
+    expect((manual.querySelector('[data-field="appName"]') as HTMLInputElement).value).toBe('Custom');
+  });
+
+  it('drops the launch_app keys when the type changes', async () => {
+    withSingleSlot([{ type: 'launch_app', desktopId: 'x.desktop', appName: 'X', note: 'keep' }]);
+    await renderEditor();
+
+    await fireEvent.change(cardControl('single', 0, 'action-type'), {
+      target: { value: 'text' },
+    });
+    await flush();
+
+    expect((await lastSetAction()).action).toEqual({
+      type: 'text',
+      text: 'Hello World',
+      note: 'keep',
     });
   });
 

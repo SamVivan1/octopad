@@ -503,6 +503,7 @@ pub fn run() {
             commands::spikes::spike_legacy_config_dir,
             commands::spikes::spike_list_ports,
             commands::spikes::spike_probe_hello,
+            commands::apps::list_applications_cmd,
             commands::device::get_state_snapshot,
             commands::device::import_legacy_config,
             commands::device::save_config_cmd,

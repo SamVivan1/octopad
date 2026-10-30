@@ -320,7 +320,8 @@ fn a_401_check_names_the_invalid_token() {
     );
 }
 
-// 361-362: `Server responded with HTTP {status}` (+ body message, plan pin).
+// 361-362: plain `Server responded with HTTP {status}` — Python has no body
+// branch on the check-connection path (I-1).
 #[test]
 fn a_500_check_reports_the_status() {
     let fx = fixture(vec![raw_status(500, "backend is on fire")]);
@@ -329,16 +330,15 @@ fn a_500_check_reports_the_status() {
     assert_eq!(result.message, "Server responded with HTTP 500");
 }
 
-// Plan bullet: "HTTP error body message appended when JSON `message` exists".
+// I-1 repin (was a_500_check_appends_the_body_message_when_the_body_is_json):
+// even a JSON error body with a `message` stays status-only here; the append
+// belongs to service-call failures (`a_failed_service_call_carries_the_body_message`).
 #[test]
-fn a_500_check_appends_the_body_message_when_the_body_is_json() {
+fn a_502_check_with_a_json_body_stays_status_only() {
     let fx = fixture(vec![status(502, &json!({"message": "proxy jailbreak"}))]);
     let result = fx.state.check_connection(None, None);
     assert!(!result.ok);
-    assert_eq!(
-        result.message,
-        "Server responded with HTTP 502: proxy jailbreak"
-    );
+    assert_eq!(result.message, "Server responded with HTTP 502");
 }
 
 // 363-364: `Connection timeout to {url} (check the LAN)`.

@@ -12,9 +12,12 @@ import { get } from 'svelte/store';
 
 import {
   appState,
+  applications,
   clearLogs,
+  ensureApplicationsLoaded,
   initializeAppState,
   lastError,
+  listApplications,
   logEntries,
   presets,
   LOG_LIMIT,
@@ -331,6 +334,47 @@ describe('event-driven state updates', () => {
     expect(get(appState)?.installedAppsCount).toBe(7);
   });
 
+  it('publishes the scanned application list from the apps-changed payload', async () => {
+    await start();
+
+    emit(OCTOPAD_EVENTS.appsChanged, {
+      apps: [
+        { id: 'code.desktop', name: 'Visual Studio Code' },
+        { id: 'org.gnome.Terminal.desktop', name: 'Terminal' },
+      ],
+    });
+    await flush();
+
+    expect(get(applications)).toEqual([
+      { id: 'code.desktop', name: 'Visual Studio Code' },
+      { id: 'org.gnome.Terminal.desktop', name: 'Terminal' },
+    ]);
+    expect(get(appState)?.installedAppsCount).toBe(2);
+  });
+
+  it('replaces the application list and count on a fresh payload', async () => {
+    await start();
+
+    emit(OCTOPAD_EVENTS.appsChanged, { apps: [{ id: 'old.desktop', name: 'Old' }] });
+    await flush();
+    emit(OCTOPAD_EVENTS.appsChanged, { apps: [] });
+    await flush();
+
+    expect(get(applications)).toEqual([]);
+    expect(get(appState)?.installedAppsCount).toBe(0);
+  });
+
+  it('ignores an apps payload whose entries are not {id, name} objects', async () => {
+    await start();
+
+    emit(OCTOPAD_EVENTS.appsChanged, { apps: 'nope' });
+    await flush();
+    emit(OCTOPAD_EVENTS.appsChanged, { apps: [{ id: 42, name: [] }] });
+    await flush();
+
+    expect(get(applications)).toEqual([]);
+  });
+
   it('applies timing events to the config', async () => {
     await start();
 
@@ -521,5 +565,49 @@ describe('command failure surfacing', () => {
     expect(invokeMock.mock.calls[0][1]).toEqual({ index: 1 });
     expect(invokeMock.mock.calls[1][1]).toEqual({ field: 'debounceMs', value: 40 });
     expect(invokeMock.mock.calls[2][1]).toEqual({ command: 'WHO' });
+  });
+});
+
+describe('application list commands', () => {
+  const THE_APPS = [
+    { id: 'code.desktop', name: 'Visual Studio Code' },
+    { id: 'org.gnome.Terminal.desktop', name: 'Terminal' },
+  ];
+
+  it('imports list_applications_cmd and stores the returned list', async () => {
+    await start();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'list_applications_cmd') return Promise.resolve(structuredClone(THE_APPS));
+      return defaultInvoke(command);
+    });
+
+    expect(await listApplications()).toEqual(THE_APPS);
+    expect(invokeMock).toHaveBeenCalledWith('list_applications_cmd', undefined);
+    expect(get(applications)).toEqual(THE_APPS);
+    expect(get(appState)?.installedAppsCount).toBe(THE_APPS.length);
+  });
+
+  it('retries after a failed load and loads once after a success', async () => {
+    await start();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'list_applications_cmd') return Promise.resolve(structuredClone(THE_APPS));
+      return defaultInvoke(command);
+    });
+
+    // A failed scan stays silent in the list but is surfaced, and the next ask
+    // retries instead of keeping the broken flag down.
+    invokeMock.mockRejectedValueOnce(new Error('scan unavailable'));
+    await ensureApplicationsLoaded();
+    expect(get(lastError)).toMatch(/could not list applications/i);
+    expect(get(applications)).toEqual([]);
+
+    await ensureApplicationsLoaded();
+    expect(get(lastError)).toBeNull();
+    expect(get(applications)).toEqual(THE_APPS);
+
+    // A completed load is not repeated while the picker stays open.
+    await ensureApplicationsLoaded();
+    const listings = invokeMock.mock.calls.filter(([command]) => command === 'list_applications_cmd');
+    expect(listings).toHaveLength(2);
   });
 });

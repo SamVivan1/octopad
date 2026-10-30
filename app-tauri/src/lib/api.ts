@@ -17,6 +17,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 
 import type {
   Action,
+  AppEntry,
   AppEventPayloads,
   AppSnapshot,
   ImportReport,
@@ -24,7 +25,7 @@ import type {
   Trigger,
 } from './types';
 
-export type { UnlistenFn };
+export type { AppEntry, UnlistenFn };
 
 /**
  * Every event the core can emit, prefixed exactly as `src-tauri/src/lib.rs`
@@ -85,6 +86,11 @@ export function listPresets(): Promise<string[]> {
 
 export function importLegacyConfig(): Promise<ImportReport> {
   return invoke<ImportReport>('import_legacy_config');
+}
+
+/** The scanned desktop applications (`list_applications_cmd`). */
+export function listApplications(): Promise<AppEntry[]> {
+  return invoke<AppEntry[]>('list_applications_cmd');
 }
 
 // -- navigation --------------------------------------------------------------

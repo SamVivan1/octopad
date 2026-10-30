@@ -771,8 +771,7 @@ impl HaState {
             Ok(response) => {
                 let status = response.status;
                 self.notify(runner, &format!("Failed ({status})"));
-                let (_, message) = describe_status(&response);
-                ActionOutcome::fail(message)
+                ActionOutcome::fail(service_failure_message(&response))
             }
             Err(HttpError {
                 kind: HttpErrorKind::Timeout,
@@ -908,9 +907,9 @@ fn bearer_header(token: &str) -> Vec<(String, String)> {
 }
 
 /// The status → `(ok, message)` table of `check_connection` (`:350-362`):
-/// 200 → the body's message, 401 → the auth failure, anything else →
-/// `Server responded with HTTP {n}`, with the error body's JSON `message`
-/// appended when present (spec §2 / task brief pin).
+/// 200 → the body's message, 401 → the auth failure, anything else → plain
+/// `Server responded with HTTP {n}` — Python `:361-362` has no body branch
+/// here (I-1); the body-derived append is service-call failures only.
 fn describe_status(response: &HttpResponse) -> (bool, String) {
     if response.status == 200 {
         (
@@ -920,7 +919,10 @@ fn describe_status(response: &HttpResponse) -> (bool, String) {
     } else if response.status == 401 {
         (false, AUTH_FAILED_401.to_string())
     } else {
-        (false, server_error_message(response))
+        (
+            false,
+            format!("Server responded with HTTP {}", response.status),
+        )
     }
 }
 
@@ -936,8 +938,20 @@ fn api_message(response: &HttpResponse) -> String {
         .to_string()
 }
 
-/// Other statuses: `Server responded with HTTP {n}`, the HTTP error body's
-/// `message` appended when a JSON `message` exists.
+/// Service-call failure path only (`:443-450`): 401 → the auth failure string,
+/// otherwise `Server responded with HTTP {n}` with the HTTP body's `message`
+/// appended when a JSON `message` exists (spec §2). The check-connection path
+/// stays plain (`describe_status`, I-1).
+fn service_failure_message(response: &HttpResponse) -> String {
+    if response.status == 401 {
+        AUTH_FAILED_401.to_string()
+    } else {
+        server_error_message(response)
+    }
+}
+
+/// Non-200 body: `Server responded with HTTP {n}`, the body's `message`
+/// appended when a JSON `message` exists.
 fn server_error_message(response: &HttpResponse) -> String {
     let base = format!("Server responded with HTTP {}", response.status);
     match serde_json::from_slice::<Value>(&response.body) {

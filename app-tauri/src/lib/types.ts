@@ -189,8 +189,20 @@ export interface HaEntitiesChangedPayload {
   count: number;
 }
 
+/** One scanned desktop application (`octopad_core::apps::AppEntry`). */
+export interface AppEntry {
+  id: string;
+  name: string;
+}
+
+/**
+ * `octopad://apps-changed` — the picker contract carries the full scanned list
+ * (`commands/apps.rs`). The core's count-only `set_apps` shape is still
+ * tolerated, so either source updates the read model.
+ */
 export interface AppsChangedPayload {
-  count: number;
+  apps?: AppEntry[];
+  count?: number;
 }
 
 /** Payloads keyed by the event name, so `listen` stays type-safe. */

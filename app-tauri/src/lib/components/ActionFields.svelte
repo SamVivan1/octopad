@@ -20,7 +20,8 @@
    *    the stored value as an extra option instead of falling back to the first
    *    entry, so opening a config written by a newer build cannot rewrite it.
    */
-  import type { Action } from '../types';
+  import type { Action, AppEntry } from '../types';
+  import { applications, ensureApplicationsLoaded } from '../state';
 
   export interface FieldOption {
     value: string;
@@ -31,6 +32,7 @@
     | 'text'
     | 'textarea'
     | 'select'
+    | 'apps'
     | 'modifiers'
     | 'sinks'
     | 'json'
@@ -179,13 +181,15 @@
       type: 'launch_app',
       label: 'App',
       hint: 'Launches an installed desktop application.',
+      // One picker writes both wire keys together (`default_action` pins
+      // `desktopId` + `appName`); the aliasing below keeps a Manual entry in
+      // sync with what a type change must drop.
       fields: [
-        { name: 'appName', label: 'App name', kind: 'text' },
         {
           name: 'desktopId',
-          label: 'App path',
-          kind: 'text',
-          hint: 'Desktop entry id, or a path to the executable.',
+          label: 'Application',
+          kind: 'apps',
+          hint: 'Scanned from the system. Choose "Manual…" for an id the scan does not list.',
         },
       ],
     },
@@ -314,6 +318,11 @@
     return { ...action, [field]: value };
   }
 
+  /** Wire keys behind one editor kind — `apps` writes `desktopId`+`appName`. */
+  function fieldKindKeys(kind: FieldKind): string[] {
+    return kind === 'apps' ? ['desktopId', 'appName'] : [];
+  }
+
   /**
    * Change an action's type.
    *
@@ -325,8 +334,8 @@
   export function withType(action: Action, nextType: string): Action {
     if (action.type === nextType) return action;
     const replaced = new Set([
-      ...actionTypeFields(action.type).map((field) => field.name),
-      ...actionTypeFields(nextType).map((field) => field.name),
+      ...actionTypeFields(action.type).flatMap((field) => [field.name, ...fieldKindKeys(field.kind)]),
+      ...actionTypeFields(nextType).flatMap((field) => [field.name, ...fieldKindKeys(field.kind)]),
     ]);
     const carried: Action = { type: nextType };
     for (const [key, value] of Object.entries(action)) {
@@ -405,6 +414,9 @@
 
   let { action, idPrefix, onChange }: Props = $props();
 
+  /** The Manual… option: a view switch in the picker, never a stored value. */
+  export const MANUAL_OPTION = { value: '__manual__', label: 'Manual…' } satisfies FieldOption;
+
   const spec = $derived(actionTypeSpec(action.type));
   const fields = $derived(spec.fields);
 
@@ -476,6 +488,67 @@
     const next = pressed ? [...current, modifier] : current.filter((item) => item !== modifier);
     commit(withField(action, 'modifiers', normaliseModifiers(next)));
   }
+
+  /** The stored `desktopId` — the value the picker select reports. */
+  const currentDesktopId = $derived(readText(action, 'desktopId'));
+  const storedAppName = $derived(readText(action, 'appName'));
+  const scannedApps = $derived.by(() =>
+    $applications.filter((app: AppEntry) => typeof app.id === 'string' && typeof app.name === 'string')
+  );
+  const currentIsScanned = $derived(
+    currentDesktopId !== '' && scannedApps.some((app) => app.id === currentDesktopId)
+  );
+
+  /** A configured id the scan does not list stays selectable instead of cleared. */
+  const preservedOption = $derived.by(() => {
+    if (currentDesktopId === '' || currentIsScanned) return null;
+    return {
+      value: currentDesktopId,
+      label: storedAppName ? `${storedAppName} (${currentDesktopId})` : currentDesktopId,
+    };
+  });
+
+  /** "Manual…" is a choice, never a stored value: an empty select shows it. */
+  const appSelectOptions = $derived(
+    preservedOption
+      ? [preservedOption, MANUAL_OPTION, ...scannedApps.map((app) => ({ value: app.id, label: app.name }))]
+      : [MANUAL_OPTION, ...scannedApps.map((app) => ({ value: app.id, label: app.name }))]
+  );
+
+  const appSelectValue = $derived(
+    currentDesktopId === '' || currentIsScanned
+      ? currentDesktopId === ''
+        ? MANUAL_OPTION.value
+        : currentDesktopId
+      : preservedOption?.value ?? MANUAL_OPTION.value
+  );
+
+  /** The text inputs appear only while Manual is the effective choice. */
+  const manualActive = $derived(appSelectValue === MANUAL_OPTION.value);
+
+  function commitAppSelection(next: string): void {
+    if (next === MANUAL_OPTION.value) {
+      // Choosing Manual reveals the inputs; it never edits the action.
+      fieldError = null;
+      return;
+    }
+    const scanned = scannedApps.find((app) => app.id === next);
+    if (scanned) {
+      // The picker's contract: one change event writes both wire keys.
+      commit({ ...action, desktopId: scanned.id, appName: scanned.name });
+      return;
+    }
+    // The preserved option — re-committing the same id is a no-op for the core.
+    commitText('desktopId', next);
+  }
+
+  // The scan is asked for exactly when a launch_app picker appears, not on
+  // every editor open; `ensureApplicationsLoaded` keeps it at most once.
+  $effect(() => {
+    if (action.type === 'launch_app') {
+      void ensureApplicationsLoaded();
+    }
+  });
 
   // -- audio output sinks -----------------------------------------------------
 

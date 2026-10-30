@@ -3,6 +3,7 @@
 
 use tauri::AppHandle;
 
+pub mod apps;
 pub mod device;
 pub mod spikes;
 
