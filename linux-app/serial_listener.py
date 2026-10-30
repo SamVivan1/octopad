@@ -15,6 +15,7 @@ from typing import Optional, Callable, Dict, Any
 
 from system_actions import execute_action
 import config as config_module
+import state
 
 CONFIG_DIR = os.path.expanduser('~/.config/octopad')
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
@@ -111,6 +112,37 @@ def execute_button_trigger(config: Dict[str, Any],
                      name="macropad-actions").start()
 
 
+def route_event_line(link: str,
+                     line: str,
+                     config: Dict[str, Any],
+                     on_log: Optional[Callable[[str], None]] = None,
+                     on_hello: Optional[Callable[[Dict[str, str]], None]] = None):
+    """Log one line from a transport, then execute it if the link allows it.
+
+    Shared by both bridges: whatever arrives over USB serial or Bluetooth goes
+    through the same link arbitration, so one physical press runs one action.
+    Returns the parsed event (or None for non-event lines).
+    """
+    if on_log is not None:
+        on_log(line)
+
+    hello = parse_hello(line)
+    if hello is not None:
+        if on_hello is not None:
+            on_hello(hello)
+        return None
+
+    event = parse_event_line(line)
+    if event is None:
+        return None
+    if not state.allow_button(link, event):
+        return event
+
+    execute_button_trigger(config, event["mode"], event["index"],
+                           event["trigger"], on_log=on_log)
+    return event
+
+
 class SerialDaemonListener:
     def __init__(self, on_event_callback: Optional[Callable[[str], None]] = None):
         self.port: Optional[str] = None
@@ -132,7 +164,7 @@ class SerialDaemonListener:
                     return json.load(f)
             except Exception as e:
                 print(f"[DAEMON] Error reading config file: {e}")
-        return self._default_config()
+        return config_module.default_config()
 
     def save_config(self, new_config: Dict[str, Any]) -> bool:
         """Save updated action configuration."""
@@ -146,40 +178,6 @@ class SerialDaemonListener:
         except Exception as e:
             print(f"[DAEMON] Failed to save config: {e}")
             return False
-
-    def _default_config(self) -> Dict[str, Any]:
-        """Default fallback configuration."""
-        return {
-            "version": 2.6,
-            "modes": [
-                {
-                    "id": "desktop",
-                    "buttons": [
-                        {"index": 0, "single": {"type": "mode_toggle"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 1, "single": {"type": "system_action", "presetId": "open_terminal"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 2, "single": {"type": "system_action", "presetId": "screenshot_interactive"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 3, "single": {"type": "system_action", "presetId": "mic_toggle_mute"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 4, "single": {"type": "system_action", "presetId": "volume_up_5"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 5, "single": {"type": "system_action", "presetId": "volume_down_5"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 6, "single": {"type": "system_action", "presetId": "lock_screen"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 7, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}}
-                    ]
-                },
-                {
-                    "id": "ha",
-                    "buttons": [
-                        {"index": 0, "single": {"type": "mode_toggle"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 1, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 2, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 3, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 4, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 5, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 6, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}},
-                        {"index": 7, "single": {"type": "none"}, "double": {"type": "none"}, "hold": {"type": "none"}}
-                    ]
-                }
-            ]
-        }
 
     @staticmethod
     def list_available_ports():
@@ -206,6 +204,7 @@ class SerialDaemonListener:
             except Exception:
                 pass
         self.ser = None
+        state.set_serial_status(False, None)
 
     def send_command(self, command: str, log: bool = True) -> bool:
         """Send a single line of text command to the hardware (used by the UI console)."""
@@ -301,6 +300,7 @@ class SerialDaemonListener:
                     target_port = self._pick_port(self.list_available_ports())
 
                 if not target_port:
+                    state.set_serial_status(False, None)
                     time.sleep(2)
                     continue
 
@@ -311,6 +311,7 @@ class SerialDaemonListener:
                     print(f"[DAEMON] {msg}")
                     if self.on_event_callback:
                         self.on_event_callback(msg)
+                    state.set_serial_status(True, target_port)
                     # Learn/confirm the device name and push the configured
                     # timing parameters (both harmless if already known/set).
                     try:
@@ -355,6 +356,7 @@ class SerialDaemonListener:
 
             except Exception as e:
                 print(f"[DAEMON] Serial read exception: {e}")
+                state.set_serial_status(False, None)
                 if self.ser:
                     try:
                         self.ser.close()
@@ -364,6 +366,14 @@ class SerialDaemonListener:
                 time.sleep(1)
 
     def _handle_hardware_trigger(self, mode: str, button_index: int, trigger_event: str):
-        """Dispatch action based on active configuration."""
+        """Dispatch action based on active configuration.
+
+        The pad sends every press over both transports, so only the link that
+        currently owns the buttons may execute (and a repeated fingerprint is
+        ignored). See link_manager.LinkManager.
+        """
+        event = {"mode": mode, "index": button_index, "trigger": trigger_event}
+        if not state.allow_button("wired", event):
+            return
         execute_button_trigger(self.config, mode, button_index, trigger_event,
                                on_log=self.on_event_callback)

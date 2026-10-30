@@ -25,7 +25,10 @@ PRESET_DIR = os.path.join(CONFIG_DIR, "presets")
 # Schema version of the stored configuration (independent of the product
 # version). Bump it whenever the on-disk shape changes and add the matching
 # upgrade step to migrate_config().
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
+
+# Which transport may drive actions. "auto" prefers the cable.
+INPUT_LINKS = ("auto", "wired", "bluetooth")
 
 # Physical pinout for buttons B1..B8 (same as octopad.ino)
 PINOUT = [20, 9, 2, 1, 21, 10, 3, 0]
@@ -160,7 +163,7 @@ def _button(index: int, label: str, single: Dict[str, Any],
 def default_config() -> Dict[str, Any]:
     """Default configuration. HA mode intentionally has no entities — the user picks them."""
     desktop_buttons = [
-        _button(0, DEFAULT_LABELS[0], {"type": "mode_toggle"}, hold={"type": "text", "text": "031004"}),
+        _button(0, DEFAULT_LABELS[0], {"type": "mode_toggle"}),
         _button(1, DEFAULT_LABELS[1], {"type": "system_action", "presetId": "open_terminal",
                                        "presetName": "Open New Terminal"}),
         _button(2, DEFAULT_LABELS[2], {"type": "system_action", "presetId": "screenshot_interactive",
@@ -179,15 +182,15 @@ def default_config() -> Dict[str, Any]:
                 {"type": "shortcut", "modifiers": ["ctrl", "alt", "shift"], "key": "J"}),
     ]
     ha_buttons = [
-        _button(0, DEFAULT_LABELS[0], {"type": "mode_toggle"}, hold={"type": "text", "text": "031004"}),
+        _button(0, DEFAULT_LABELS[0], {"type": "mode_toggle"}),
     ]
     for i, label in enumerate(HA_KEY_LABELS):
         ha_buttons.append(_button(i + 1, label, default_action("home_assistant")))
 
     return {
-        "version": 2.6,
         "schemaVersion": CURRENT_SCHEMA_VERSION,
         "device": "OctoPad",
+        "inputLink": "auto",
         **DEFAULT_TIMINGS,
         "activeModeIndex": 0,
         "modes": [
@@ -310,7 +313,15 @@ def migrate_config(data: Dict[str, Any]) -> Dict[str, Any]:
         # the loading code already fills in any missing default fields.
         version = 1
 
+    if version < 2:
+        # Schema 2: the product version is no longer stored in the profile (the
+        # single source is the VERSION file) and the input-link preference
+        # arrived. Unknown values fall back to auto below.
+        data.pop("version", None)
+
     data["schemaVersion"] = CURRENT_SCHEMA_VERSION
+    if data.get("inputLink") not in INPUT_LINKS:
+        data["inputLink"] = "auto"
     return data
 
 
@@ -329,10 +340,12 @@ def load_config() -> Dict[str, Any]:
     if not isinstance(stored, dict):
         return config
 
-    for key in ("version", "schemaVersion", "device", "debounceMs", "clickTimeoutMs",
+    for key in ("schemaVersion", "device", "inputLink", "debounceMs", "clickTimeoutMs",
                 "holdTimeoutMs", "activeModeIndex", "activePreset"):
         if key in stored:
             config[key] = stored[key]
+    if config.get("inputLink") not in INPUT_LINKS:
+        config["inputLink"] = "auto"
 
     stored_modes = stored.get("modes")
     if isinstance(stored_modes, list) and len(stored_modes) >= 2:

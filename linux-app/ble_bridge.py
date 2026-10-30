@@ -24,8 +24,7 @@ from gi.repository import Gio, GLib
 
 import config as config_module
 import state
-from serial_listener import (execute_button_trigger, parse_event_line,
-                             parse_hello)
+from serial_listener import route_event_line
 
 SERVICE_UUID = "6f63746f-7061-4430-8001-000000000001"
 TX_UUID = "6f63746f-7061-4430-8001-000000000002"
@@ -559,26 +558,18 @@ class BleBridge:
 
     def _feed_line(self, line: str) -> None:
         """Process a single BLE event line: log/UI + execute the action."""
-        # The shared serial handler owns logging, mode switching and the
-        # hardware-event signal (state.emit is thread-safe: it marshals UI
-        # callbacks onto the GTK main loop).
-        if self.on_event_callback is not None:
-            self.on_event_callback(line)
-        else:
-            state.emit("serial-log", line=line)
+        # The shared router owns logging, identity learning, link arbitration
+        # and the hardware-event signal (state.emit is thread-safe: it
+        # marshals UI callbacks onto the GTK main loop).
+        def log_line(msg: str) -> None:
+            if self.on_event_callback is not None:
+                self.on_event_callback(msg)
+            else:
+                state.emit("serial-log", line=msg)
 
-        hello = parse_hello(line)
-        if hello is not None:
+        def on_hello(hello: Dict[str, str]) -> None:
             state.set_device_name(hello["name"] or DEFAULT_DEVICE_NAME)
             state.set_firmware_version(hello["version"])
-            return
 
-        event = parse_event_line(line)
-        if event is None:
-            return
-
-        def log_line(msg: str) -> None:
-            state.emit("serial-log", line=msg)
-
-        execute_button_trigger(state.cfg, event["mode"], event["index"],
-                               event["trigger"], on_log=log_line)
+        route_event_line("bluetooth", line, state.cfg,
+                         on_log=log_line, on_hello=on_hello)

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 import config as config_module
 import state
+import version as version_module
 from ui import util
 
 _PAGES = (
@@ -120,7 +121,7 @@ class OctoPadWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "About OctoPad",
-            "OctoPad v2.6\n\n"
+            "OctoPad v" + version_module.app_version() + "\n\n"
             "Native Windows application for an 8-key serial macropad.\n"
             "Home Assistant REST integration and local action mapping,\n"
             "with no web server required.\n\n"

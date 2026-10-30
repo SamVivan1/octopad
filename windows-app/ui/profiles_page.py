@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 import config as config_module
 import state
+import version as version_module
 from ui import util
 
 
@@ -78,7 +79,7 @@ class ProfilesPage(QWidget):
 
         about = QGroupBox("About")
         about_layout = util.vbox(4, about)
-        about_layout.addWidget(QLabel("OctoPad v2.6"))
+        about_layout.addWidget(QLabel("OctoPad v" + version_module.app_version()))
         about_layout.addWidget(util.hint(
             "Native Windows application (PySide6) - 8 keys, Home Assistant REST, "
             "no scripts."))

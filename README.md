@@ -1,11 +1,11 @@
-# 🎛️ OctoPad v2.6
+# 🎛️ OctoPad v2.6.1
 
 [![ESP32](https://img.shields.io/badge/Microcontroller-ESP32--C3-red.svg?logo=espressif)](https://www.espressif.com/)
 [![Connectivity](https://img.shields.io/badge/Connectivity-BLE%20HID%20%7C%20USB--Serial-blue.svg)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-0078D6.svg?logo=windows&logoColor=white)](https://github.com/SamVivan1/octopad)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**OctoPad v2.6** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
+**OctoPad v2.6.1** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
 
 ---
 
@@ -20,13 +20,18 @@
   - **Home Assistant Mode**: IoT shortcuts and smart home automation (Status LED OFF).
 - **Dedicated System Key (B1 / GPIO 20)**:
   - Single Click: Toggle layer (*Desktop Mode* ↔ *Home Assistant Mode*).
-  - Hold / Long Press: Automatically types a passcode/string (`031004`).
+  - Hold / Long Press: free for your own action (none mapped by default).
 - **Native Desktop Application (GTK4 + Libadwaita)**:
   - Visual interactive 8-key mechanical chassis with a per-trigger action inspector (1x / 2x / hold).
   - **Live Hardware Event Monitor**: on-screen key press animations in real time when the physical switch is pressed.
   - **Serial Console**: hardware log + send commands to the macropad from within the app.
   - **Profiles** page: save, import & export key mapping profiles (`.json`) + built-in presets.
   - **Serial** and **Home Assistant** status pills directly in the header.
+  - **Input link** (Settings → Connection): **Auto** (USB cable wins, Bluetooth
+    takes over when unplugged), **Wired**, or **Bluetooth** — switchable in
+    software, no extra hardware. Only the active link runs actions, so having
+    the cable plugged in while Bluetooth is connected no longer fires a key
+    twice.
 - **Native Linux Ubuntu Support**:
   - Ready to connect via BLE Keyboard or a USB Serial cable.
   - **Native desktop application** (GTK4 + Libadwaita) — just like Vial / OpenRGB, not a background daemon.
@@ -44,7 +49,7 @@ Uses an **ESP32-C3 SuperMini** microcontroller with an active-LOW switch configu
 | Component | Physical Pin (GPIO) | Default Function | Description |
 | :--- | :---: | :--- | :--- |
 | **Status LED** | `GPIO 4` | Mode Indicator & Blink Feedback | ON = Desktop Mode, OFF = HA Mode |
-| **Button 1** | `GPIO 20` | Mode Switch / Passcode String | Single: Toggle Mode, Hold: String `"031004"` |
+| **Button 1** | `GPIO 20` | Mode Switch | Single: Toggle Mode, Hold: free for a custom action |
 | **Button 2** | `GPIO 9` | Macro 1 | Desktop: Ctrl+Alt+Shift + 2 / Q / A |
 | **Button 3** | `GPIO 2` | Macro 2 | Desktop: Ctrl+Alt+Shift + 3 / W / S |
 | **Button 4** | `GPIO 1` | Macro 3 | Desktop: Ctrl+Alt+Shift + 4 / E / D |
@@ -67,7 +72,7 @@ All default shortcuts are sent with the modifier combination: `Ctrl + Alt + Shif
 ### 1. Desktop Mode (LED GPIO 4: ON)
 | Key | Single Click (1x) | Double Click (2x) | Hold / Long Press |
 | :---: | :---: | :---: | :---: |
-| **B1** | *Toggle to HA Mode* | *None* | Text: `"031004"` |
+| **B1** | *Toggle to HA Mode* | *None* | *None* |
 | **B2** | `Key 2` | `Key Q` | `Key A` |
 | **B3** | `Key 3` | `Key W` | `Key S` |
 | **B4** | `Key 4` | `Key E` | `Key D` |
@@ -79,7 +84,7 @@ All default shortcuts are sent with the modifier combination: `Ctrl + Alt + Shif
 ### 2. Home Assistant Mode (LED GPIO 4: OFF)
 | Key | Single Click (1x) | Double Click (2x) | Hold / Long Press |
 | :---: | :---: | :---: | :---: |
-| **B1** | *Toggle to Desktop Mode* | *None* | Text: `"031004"` |
+| **B1** | *Toggle to Desktop Mode* | *None* | *None* |
 | **B2** | `Key F2` | `Key Z` | `Key 9` |
 | **B3** | `Key F3` | `Key X` | `Key 0` |
 | **B4** | `Key F4` | `Key C` | `Key I` |
@@ -204,8 +209,11 @@ Every update triggers the [`Build`](.github/workflows/build.yml) workflow, which
 produces a **`.deb`** for Linux (statically built with `packaging/deb/build_deb.sh`),
 a **standalone `.exe`** for Windows (built with PyInstaller) and the **ESP32
 firmware `.bin`** (compiled with `arduino-cli` for the ESP32-C3). Push a tag like
-`v2.6.0` and all three files are attached to the GitHub **Release**
-automatically. Pull requests that touch `octopad.ino` are compile-checked by the
+`v2.6.1` and all three files are attached to the GitHub **Release**
+automatically; the [latest release](https://github.com/SamVivan1/octopad/releases/latest)
+always holds the current `octopad_<version>-1_all.deb`,
+`octopad_<version>_windows-x64.exe` and `octopad_<version>_firmware.bin`.
+Pull requests that touch `octopad.ino` are compile-checked by the
 [`Firmware`](.github/workflows/firmware.yml) workflow.
 
 - **Linux (.deb)** — install with:
@@ -243,9 +251,10 @@ on a small identity protocol so any name works:
   | `NAME:<text>` | `NAME:OK:<text>` | Rename + persist the pad |
   | `TIMING:<d>,<c>,<h>` | `TIMING:OK:…` | Set debounce / click / hold (ms) |
   | `MODE:DESKTOP\|HA` | `MODE: …` | Switch layer + persist |
-  | `SAVE` | `SAVED` | Persist name, mode and timings |
-  | `INFO` | `INFO:…` | Dump name, mode and timings |
-  | `RESET` | `RESET:OK` | Restore default timings + Desktop mode |
+  | `LINK:AUTO\|USB\|BLE` | `LINK:OK:…` | Choose which transport sends key events, persist |
+  | `SAVE` | `SAVED` | Persist name, mode, link and timings |
+  | `INFO` | `INFO:…` | Dump name, mode, link and timings |
+  | `RESET` | `RESET:OK` | Restore default timings + Auto link + Desktop mode |
   | `RESTART` | `REBOOTING` | Reboot the ESP32 |
 
   The firmware also runs a task watchdog: if the main loop ever hangs, the pad

@@ -4,7 +4,34 @@ All notable changes to OctoPad are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.0]
+## [2.6.1] - 2026-10-30
+
+### Fixed
+- **No more double input.** With the cable plugged in while Bluetooth is also
+  connected, every press used to run its action twice: the firmware sends each
+  event over both transports and both bridges executed it. Input now goes
+  through a link manager: only the active link executes, with a 300 ms
+  duplicate guard as a safety net.
+- The default configuration no longer embeds a passcode string in the button-1
+  hold slot.
+
+### Added
+- **Input link preference** (`auto` / `wired` / `bluetooth`) in Settings:
+  `auto` prefers the cable, so unplugging switches to Bluetooth without any
+  extra hardware. The choice is stored in the profile and pushed to the pad.
+- Firmware `LINK:AUTO|USB|BLE` command: the pad stops sending events over the
+  inactive transport. Older firmware ignores it and stays safe thanks to the
+  app-side guard.
+
+### Changed
+- **One version everywhere.** `VERSION` is now the single source: the apps read
+  it at runtime, the firmware constant must match, and CI fails when the
+  changelog or firmware drifts. Hardcoded "2.6" strings are gone.
+- Configuration schema 2: the unused legacy `version` field is dropped (the
+  product version lives in `VERSION`, the schema in `schemaVersion`), and the
+  serial listener now reuses `config.default_config()` instead of its own copy.
+
+## [2.6.0] - 2026-10-13
 
 ### Added
 - **Configurable timing from the app.** The firmware now accepts a
@@ -54,7 +81,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   uses whichever transport is connected (USB or Bluetooth), not just USB.
 - Settings now shows the pad's **firmware version**, learned from the identity
   (`HELLO`) line over both USB and Bluetooth.
-- Version bumped to 2.6 (firmware, apps, `VERSION`).
+- Version bumped to 2.6.0 (firmware, apps, `VERSION`).
 - CI now compiles the firmware (`arduino-cli`, ESP32-C3) and attaches
   `octopad_*_firmware.bin` to GitHub Releases; a dedicated `Firmware` workflow
   checks firmware changes on pull requests.
@@ -67,7 +94,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keycode constants. `SAVE` / `RESET` were redefined to persist/restore the
   runtime settings.
 
-## [2.5.0] - 2026
+## [2.5.0] - 2026 (historical, never tagged)
 
 - Native Windows application (PySide6/Qt6) alongside the Linux GTK4 app.
 - CI/CD: build `.deb` and standalone `.exe` on every update; versioned GitHub

@@ -12,6 +12,7 @@ import copy
 import threading
 
 import config as config_module
+from link_manager import BLUETOOTH, WIRED, LinkManager
 
 # Thread that owns the GTK main loop (captured at import time). Emits coming
 # from worker threads (e.g. the BLE bridge) are marshalled back onto it.
@@ -53,6 +54,55 @@ listener: Any = None         # SerialDaemonListener (set by main.py)
 ble: Any = None              # BleBridge (set by main.py)
 
 _subscribers: List[Callable[..., None]] = []
+
+# Which transport owns the buttons (USB serial or BLE). Both may be connected
+# at once; only the active link executes an action.
+links = LinkManager(policy=cfg.get("inputLink", "auto"))
+cfg["inputLink"] = links.policy
+
+_FIRMWARE_LINK = {"auto": "AUTO", "wired": "USB", "bluetooth": "BLE"}
+
+
+def link_command(policy: str) -> str:
+    """The firmware command that mirrors an input-link policy."""
+    return "LINK:" + _FIRMWARE_LINK.get((policy or "").strip().lower(), "AUTO")
+
+
+def allow_button(link: str, event: Dict[str, Any]) -> bool:
+    """True when this event from this link should execute exactly once."""
+    return links.allows(link, event)
+
+
+def _persist_input_link(policy: str) -> None:
+    """Store the preference without flushing unsaved edits from the editor."""
+    stored = config_module.load_config()
+    stored["inputLink"] = policy
+    config_module.save_config(stored)
+
+
+def sync_input_link() -> bool:
+    """Tell the pad which transport should carry button events."""
+    return send_device_command(link_command(links.policy), log=False)
+
+
+def set_input_link(policy: str, persist: bool = True) -> str:
+    """Apply an input-link policy now and (optionally) persist the choice."""
+    canonical = links.set_policy(policy)
+    if cfg.get("inputLink") != canonical:
+        cfg["inputLink"] = canonical
+        _saved_cfg["inputLink"] = canonical
+        if persist:
+            _persist_input_link(canonical)
+    emit("input-link-changed", policy=canonical, active=links.active_link)
+    sync_input_link()
+    return canonical
+
+
+def set_link_connected(link: str, connected: bool) -> None:
+    if not links.set_connected(link, connected):
+        return
+    emit("input-link-changed", policy=links.policy, active=links.active_link)
+    sync_input_link()
 
 
 def _sync_timings() -> None:
@@ -385,21 +435,21 @@ def set_ha_status(connected: bool, message: str) -> None:
 
 def set_serial_status(connected: bool, port: Optional[str]) -> None:
     global serial_connected, serial_port
-    if connected == serial_connected and port == serial_port:
-        return
-    serial_connected = connected
-    serial_port = port
-    emit("serial-status-changed", connected=connected, port=port)
+    if connected != serial_connected or port != serial_port:
+        serial_connected = connected
+        serial_port = port
+        emit("serial-status-changed", connected=connected, port=port)
+    set_link_connected(WIRED, connected)
 
 
 def set_ble_status(connected: bool, message: str) -> None:
     """Bluetooth connection status (BLE bridge). Does not emit if unchanged."""
     global ble_connected, ble_message
-    if connected == ble_connected and message == ble_message:
-        return
-    ble_connected = connected
-    ble_message = message
-    emit("ble-status-changed", connected=connected, message=message)
+    if connected != ble_connected or message != ble_message:
+        ble_connected = connected
+        ble_message = message
+        emit("ble-status-changed", connected=connected, message=message)
+    set_link_connected(BLUETOOTH, connected)
 
 
 def set_device_name(name: Optional[str]) -> None:

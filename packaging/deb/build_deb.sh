@@ -37,6 +37,9 @@ mkdir -p "$LIB" "$STAGE/usr/bin" \
 
 # --- Application payload ---------------------------------------------------
 cp -a "$APP_SRC/." "$LIB/"
+# The single source of truth for the version ships with the app so an installed
+# copy reports the same number as the repository checkout.
+cp "$REPO_ROOT/VERSION" "$LIB/VERSION"
 rm -rf "$LIB/.venv"
 find "$LIB" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 find "$LIB" -name '*.pyc' -delete 2>/dev/null || true

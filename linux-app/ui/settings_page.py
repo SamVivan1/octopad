@@ -10,6 +10,7 @@ from gi.repository import Gtk, Adw, GLib  # noqa: E402
 
 import config as config_module
 import state
+import version as version_module
 from ui import util
 
 
@@ -110,7 +111,7 @@ class ProfilesPage(Gtk.Box):
 
         info = Adw.PreferencesGroup(title="About")
         info.add(Adw.ActionRow(
-            title="OctoPad v2.6",
+            title=f"OctoPad v{version_module.app_version()}",
             subtitle="Native GTK4 application for Ubuntu / GNOME — 8 keys, "
                      "Home Assistant REST, no scripts.",
         ))
@@ -279,6 +280,26 @@ class SettingsPage(Gtk.Box):
             timing.add(row)
         page.add(timing)
 
+        # --- Input link -----------------------------------------------------
+        link_group = Adw.PreferencesGroup(
+            title="Connection",
+            description="Which transport may run key actions. Auto prefers the "
+                        "USB cable and falls back to Bluetooth when unplugged.",
+        )
+        self._link_values = tuple(config_module.INPUT_LINKS)
+        self.link_row = Adw.ComboRow(title="Input link")
+        self.link_row.set_model(Gtk.StringList.new([
+            "Auto (wired first)", "Wired (USB)", "Bluetooth"]))
+        self.link_row.connect("notify::selected", self._on_link_selected)
+        link_group.add(self.link_row)
+
+        self.active_link_row = Adw.ActionRow(
+            title="Active input",
+            subtitle="None — waiting for a transport",
+        )
+        link_group.add(self.active_link_row)
+        page.add(link_group)
+
         # --- Home Assistant --------------------------------------------
         ha_group = Adw.PreferencesGroup(title="Home Assistant")
         self.ha_row = Adw.ActionRow(title="Connection", subtitle="Checking…")
@@ -344,6 +365,7 @@ class SettingsPage(Gtk.Box):
         state.subscribe(self._on_state_event)
         self._sync_ha()
         self._sync_device()
+        self._sync_link()
 
     # ------------------------------------------------------------------
     def _sync_device(self) -> None:
@@ -419,6 +441,30 @@ class SettingsPage(Gtk.Box):
             self._sync_ha()
         elif event == "apps-changed":
             self.apps_row.set_subtitle(f"{len(state.installed_apps)} applications")
+        elif event == "input-link-changed":
+            self._sync_link()
+
+    # ------------------------------------------------------------------
+    # Input link
+    # ------------------------------------------------------------------
+    def _sync_link(self) -> None:
+        policy = state.links.policy
+        index = (self._link_values.index(policy)
+                 if policy in self._link_values else 0)
+        if self.link_row.get_selected() != index:
+            self.link_row.set_selected(index)
+        active = state.links.active_link
+        labels = {"wired": "USB cable", "bluetooth": "Bluetooth"}
+        self.active_link_row.set_subtitle(
+            labels.get(active, "None — waiting for a transport"))
+
+    def _on_link_selected(self, row, _pspec) -> None:
+        index = row.get_selected()
+        if not 0 <= index < len(self._link_values):
+            return
+        policy = self._link_values[index]
+        if policy != state.links.policy:
+            state.set_input_link(policy)
 
     def _on_ha_connect(self, _btn) -> None:
         from ui.ha_dialogs import HaConnectionDialog

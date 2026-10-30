@@ -22,7 +22,7 @@
 // Identity / naming. The brand tag is what the application uses to confirm it
 // is an OctoPad and learn the user-configured name. The name lives in NVS and
 // can be anything — the app finds the pad by its OctoPad signature, not a name.
-#define FIRMWARE_VERSION "2.6"
+#define FIRMWARE_VERSION "2.6.1"
 #define DEVICE_BRAND "OCTOPAD"
 #define DEFAULT_DEVICE_NAME "OctoPad"
 #define MAX_DEVICE_NAME_LEN 24
@@ -40,6 +40,9 @@ const uint8_t LED_PIN = 4;      // On-board LED (active-high)
 
 enum MacroMode { DESKTOP_MODE, HOME_ASSISTANT_MODE };
 enum ButtonEvent { NONE, SINGLE_CLICK, DOUBLE_CLICK, HOLD };
+// Which transport carries button events. AUTO = both (the app arbitrates),
+// USB/BLE = only that transport (the app still gets replies on both).
+enum LinkPolicy { LINK_AUTO, LINK_USB, LINK_BLE };
 
 // Runtime-adjustable timings (persisted in NVS).
 uint16_t debounceMs = DEFAULT_DEBOUNCE_MS;
@@ -47,6 +50,7 @@ uint16_t clickTimeoutMs = DEFAULT_CLICK_TIMEOUT_MS;
 uint16_t holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS;
 
 MacroMode currentMode = DESKTOP_MODE;
+LinkPolicy currentLink = LINK_AUTO;
 
 String deviceName = DEFAULT_DEVICE_NAME;
 
@@ -118,6 +122,7 @@ void respond(const String& s) {
 void loadSettings() {
   prefs.begin("mp", true);
   uint8_t storedMode = prefs.getUChar("mode", 0);
+  uint8_t storedLink = prefs.getUChar("link", 0);
   debounceMs = prefs.getUShort("deb", DEFAULT_DEBOUNCE_MS);
   clickTimeoutMs = prefs.getUShort("clk", DEFAULT_CLICK_TIMEOUT_MS);
   holdTimeoutMs = prefs.getUShort("hld", DEFAULT_HOLD_TIMEOUT_MS);
@@ -125,6 +130,8 @@ void loadSettings() {
   prefs.end();
 
   currentMode = (storedMode == 1) ? HOME_ASSISTANT_MODE : DESKTOP_MODE;
+  currentLink = (storedLink == 1) ? LINK_USB
+                 : (storedLink == 2) ? LINK_BLE : LINK_AUTO;
 
   stored.trim();
   if (stored.length() == 0 || stored.length() > MAX_DEVICE_NAME_LEN) {
@@ -136,6 +143,7 @@ void loadSettings() {
 void saveSettings() {
   prefs.begin("mp", false);
   prefs.putUChar("mode", currentMode == HOME_ASSISTANT_MODE ? 1 : 0);
+  prefs.putUChar("link", currentLink == LINK_USB ? 1 : currentLink == LINK_BLE ? 2 : 0);
   prefs.putUShort("deb", debounceMs);
   prefs.putUShort("clk", clickTimeoutMs);
   prefs.putUShort("hld", holdTimeoutMs);
@@ -223,19 +231,29 @@ void updateLED() {
   }
 }
 
+const char* linkName() {
+  return currentLink == LINK_USB ? "USB" : currentLink == LINK_BLE ? "BLE" : "AUTO";
+}
+
 void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
   // 1. Mode button (Button 1): a single click toggles the layer.
   if (buttonIndex == MODE_BUTTON && event == SINGLE_CLICK) {
     toggleMode();
   }
 
-  // 2. Emit the event line to both transports (identical format for the app).
+  // 2. Emit the event line to the transports allowed by the link policy. In
+  // AUTO both are used and the application arbitrates; USB/BLE suppress the
+  // inactive transport so one press cannot arrive twice.
   String modeText = (currentMode == DESKTOP_MODE) ? "DESKTOP" : "HA";
   String eventText = (event == SINGLE_CLICK) ? "SINGLE" : (event == DOUBLE_CLICK) ? "DOUBLE" : "HOLD";
   String line = String("[") + modeText + "] Button " + String(buttonIndex + 1) +
                 " -> " + eventText + " (LED Feedback Processed)";
-  Serial.println(line);
-  bleSend(line);
+  if (currentLink != LINK_BLE) {
+    Serial.println(line);
+  }
+  if (currentLink != LINK_USB) {
+    bleSend(line);
+  }
 
   // 3. Global LED feedback: double = 2 blinks, hold = 3 blinks, single = none.
   if (event == DOUBLE_CLICK) {
@@ -249,13 +267,14 @@ void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
 // Command protocol (USB serial + BLE RX characteristic)
 //   WHO                 -> HELLO:OCTOPAD:<name>:v<version>
 //   VERSION             -> VERSION:OCTOPAD:<version>
-//   HELP                -> HELP:WHO,NAME,TIMING,MODE,SAVE,RESET,VERSION
+//   HELP                -> HELP:WHO,NAME,TIMING,MODE,LINK,SAVE,RESET,VERSION
 //   NAME:<text>         -> NAME:OK:<text> | NAME:ERR:length
 //   TIMING:<d>,<c>,<h>  -> TIMING:OK:<d>,<c>,<h> | TIMING:ERR
 //   MODE:DESKTOP|HA     -> MODE: DESKTOP | MODE: HOME ASSISTANT
+//   LINK:AUTO|USB|BLE   -> LINK:OK:<mode> | LINK:ERR
 //   SAVE                -> SAVED
-//   RESET               -> RESET:OK (timings + mode restored, name kept)
-//   INFO                -> INFO:name=...,mode=...,debounce=...,click=...,hold=...
+//   RESET               -> RESET:OK (timings + mode + link restored, name kept)
+//   INFO                -> INFO:name=...,mode=...,link=...,debounce=...,click=...,hold=...
 //   RESTART             -> REBOOTING (reboots the ESP32)
 // ---------------------------------------------------------------------------
 void processCommand(const String& l) {
@@ -268,12 +287,13 @@ void processCommand(const String& l) {
     return;
   }
   if (l.startsWith("HELP")) {
-    respond("HELP:WHO,NAME,TIMING,MODE,SAVE,RESET,INFO,RESTART,VERSION");
+    respond("HELP:WHO,NAME,TIMING,MODE,LINK,SAVE,RESET,INFO,RESTART,VERSION");
     return;
   }
   if (l.startsWith("INFO")) {
     String info = String("INFO:name=") + deviceName +
                   ",mode=" + (currentMode == DESKTOP_MODE ? "DESKTOP" : "HA") +
+                  ",link=" + linkName() +
                   ",debounce=" + debounceMs + ",click=" + clickTimeoutMs +
                   ",hold=" + holdTimeoutMs + ",version=" + FIRMWARE_VERSION;
     respond(info);
@@ -327,6 +347,24 @@ void processCommand(const String& l) {
     }
     return;
   }
+  if (l.startsWith("LINK:")) {
+    String target = l.substring(5);
+    target.trim();
+    target.toUpperCase();
+    if (target == "AUTO") {
+      currentLink = LINK_AUTO;
+    } else if (target == "USB" || target == "WIRED") {
+      currentLink = LINK_USB;
+    } else if (target == "BLE" || target == "BLUETOOTH") {
+      currentLink = LINK_BLE;
+    } else {
+      respond("LINK:ERR");
+      return;
+    }
+    saveSettings();
+    respond(String("LINK:OK:") + linkName());
+    return;
+  }
   if (l.startsWith("SAVE")) {
     saveSettings();
     respond("SAVED");
@@ -336,6 +374,7 @@ void processCommand(const String& l) {
     debounceMs = DEFAULT_DEBOUNCE_MS;
     clickTimeoutMs = DEFAULT_CLICK_TIMEOUT_MS;
     holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS;
+    currentLink = LINK_AUTO;
     setMode(DESKTOP_MODE, false);
     saveSettings();
     respond("RESET:OK");

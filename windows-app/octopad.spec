@@ -23,6 +23,9 @@ for package in ("bleak", "comtypes", "pycaw"):
         pass
 
 datas = []
+version_file = os.path.join(os.path.dirname(os.path.abspath(SPECPATH)), "..", "VERSION")
+if os.path.exists(version_file):
+    datas.append((version_file, "."))
 try:
     datas += collect_data_files("comtypes")
 except Exception:  # noqa: BLE001

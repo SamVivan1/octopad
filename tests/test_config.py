@@ -69,6 +69,40 @@ def test_migrate_non_dict_is_passthrough(cfg):
     assert cfg.migrate_config(None) is None
 
 
+def test_default_config_has_input_link(cfg):
+    assert cfg.default_config()["inputLink"] == "auto"
+
+
+def test_default_config_has_no_legacy_version_field(cfg):
+    assert "version" not in cfg.default_config()
+
+
+def test_migrate_drops_the_legacy_version_field(cfg):
+    migrated = cfg.migrate_config({"schemaVersion": 1, "version": 2.6})
+    assert "version" not in migrated
+    assert migrated["schemaVersion"] == cfg.CURRENT_SCHEMA_VERSION
+
+
+def test_migrate_adds_the_default_input_link(cfg):
+    assert cfg.migrate_config({"schemaVersion": 1})["inputLink"] == "auto"
+
+
+def test_migrate_keeps_a_chosen_input_link(cfg):
+    migrated = cfg.migrate_config({"schemaVersion": 1, "inputLink": "bluetooth"})
+    assert migrated["inputLink"] == "bluetooth"
+
+
+def test_migrate_rejects_an_unknown_input_link(cfg):
+    migrated = cfg.migrate_config({"schemaVersion": 1, "inputLink": "carrier-pigeon"})
+    assert migrated["inputLink"] == "auto"
+
+
+def test_default_config_ships_no_embedded_passcode(cfg):
+    import json
+
+    assert "031004" not in json.dumps(cfg.default_config())
+
+
 def test_preset_slug(cfg):
     assert cfg.preset_slug("My Profile!!") == "my-profile"
     assert cfg.preset_slug("") == "preset"

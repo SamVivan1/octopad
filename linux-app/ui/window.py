@@ -10,6 +10,7 @@ from gi.repository import Gtk, Adw, Gio, GLib  # noqa: E402
 
 import config as config_module
 import state
+import version as version_module
 from ui import util
 
 _PAGES = (
@@ -176,7 +177,7 @@ class OctoPadWindow(Adw.ApplicationWindow):
             transient_for=self,
             application_name="OctoPad",
             application_icon="octopad",
-            version="2.6",
+            version=version_module.app_version(),
             developer_name="OctoPad Project",
             developers=["SamVivan", "OctoPad contributors"],
             license_type=Gtk.License.MIT_X11,
@@ -451,6 +452,9 @@ class OctoPadWindow(Adw.ApplicationWindow):
     # Pill / button synchronization
     # ------------------------------------------------------------------
     def _sync_pills(self) -> None:
+        active = state.links.active_link
+        active_label = {"wired": "USB cable", "bluetooth": "Bluetooth"}.get(
+            active, "none")
         if state.serial_connected or state.ble_connected:
             if state.serial_connected:
                 icon = "network-wired-symbolic"
@@ -460,6 +464,10 @@ class OctoPadWindow(Adw.ApplicationWindow):
             else:
                 icon = "bluetooth-symbolic"
                 tip = "Connected via Bluetooth"
+            if active is None:
+                tip += " — actions paused: preferred input is not connected"
+            else:
+                tip += f" — actions run over {active_label}"
             self.conn_pill_icon.set_from_icon_name(icon)
             self.conn_pill_icon.set_visible(True)
             self.conn_pill_lbl.set_text("Connected")
@@ -515,7 +523,7 @@ class OctoPadWindow(Adw.ApplicationWindow):
         if event == "mode-changed":
             self.title_widget.set_subtitle(self._mode_subtitle())
         elif event in ("serial-status-changed", "ha-status-changed",
-                       "ble-status-changed"):
+                       "ble-status-changed", "input-link-changed"):
             self._sync_pills()
         elif event in ("dirty-changed", "config-saved"):
             self._sync_save_button()
