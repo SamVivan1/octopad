@@ -194,6 +194,147 @@ def default_config() -> Dict[str, Any]:
     }
 
 
+# --- Standalone (firmware HID) action table --------------------------------
+# The pad can run actions itself when the application is not connected. The
+# trigger slot is packed into one line:
+#   ACT:<mode>,<button>,<trigger>,<type>,<modifiers>,<key>,<text-hex>
+# Mode 0=Desktop 1=HA, button 0-7, trigger 0=single 1=double 2=hold.
+FIRMWARE_TEXT_MAX = 64
+
+FIRMWARE_ACTION_NONE = 0
+FIRMWARE_ACTION_TEXT = 1
+FIRMWARE_ACTION_SHORTCUT = 2
+FIRMWARE_ACTION_VOLUME_UP = 3
+FIRMWARE_ACTION_VOLUME_DOWN = 4
+FIRMWARE_ACTION_VOLUME_MUTE = 5
+FIRMWARE_ACTION_SCREENSHOT = 6
+FIRMWARE_ACTION_LOCK = 7
+FIRMWARE_ACTION_TERMINAL = 8
+FIRMWARE_ACTION_APP_ONLY = 9
+FIRMWARE_ACTION_HOME_ASSISTANT = 10
+FIRMWARE_ACTION_MEDIA_PLAY = 11
+FIRMWARE_ACTION_MEDIA_NEXT = 12
+FIRMWARE_ACTION_MEDIA_PREV = 13
+
+FIRMWARE_PRESETS: Dict[str, int] = {
+    "volume_up_5": FIRMWARE_ACTION_VOLUME_UP,
+    "volume_down_5": FIRMWARE_ACTION_VOLUME_DOWN,
+    "volume_toggle_mute": FIRMWARE_ACTION_VOLUME_MUTE,
+    "screenshot_interactive": FIRMWARE_ACTION_SCREENSHOT,
+    "lock_screen": FIRMWARE_ACTION_LOCK,
+    "open_terminal": FIRMWARE_ACTION_TERMINAL,
+    "media_play_pause": FIRMWARE_ACTION_MEDIA_PLAY,
+    "media_next": FIRMWARE_ACTION_MEDIA_NEXT,
+    "media_prev": FIRMWARE_ACTION_MEDIA_PREV,
+}
+
+FIRMWARE_MEDIA: Dict[str, int] = {
+    "MUTE": FIRMWARE_ACTION_VOLUME_MUTE,
+    "VOL_UP": FIRMWARE_ACTION_VOLUME_UP,
+    "VOL_DOWN": FIRMWARE_ACTION_VOLUME_DOWN,
+    "PLAY_PAUSE": FIRMWARE_ACTION_MEDIA_PLAY,
+    "NEXT_TRACK": FIRMWARE_ACTION_MEDIA_NEXT,
+    "PREV_TRACK": FIRMWARE_ACTION_MEDIA_PREV,
+}
+
+# USB HID modifier bits (they match the report byte).
+FIRMWARE_MODIFIERS: Dict[str, int] = {
+    "ctrl": 0x01, "shift": 0x02, "alt": 0x04, "super": 0x08,
+}
+
+# USB HID keyboard usage page codes, keyed by the editor's key names.
+FIRMWARE_NAMED_KEYS: Dict[str, int] = {
+    "ENTER": 0x28, "ESC": 0x29, "BACKSPACE": 0x2A, "TAB": 0x2B,
+    "SPACE": 0x2C, "UP": 0x52, "DOWN": 0x51, "LEFT": 0x50,
+    "RIGHT": 0x4F, "HOME": 0x4A, "END": 0x4D, "PAGE_UP": 0x4B,
+    "PAGE_DOWN": 0x4E, "DELETE": 0x4C,
+}
+
+
+def firmware_keycode(key: Any) -> Optional[int]:
+    """HID usage code for a key name from the editor, or None."""
+    name = str(key or "").strip().upper()
+    if len(name) == 1 and "A" <= name <= "Z":
+        return 0x04 + ord(name) - ord("A")
+    if len(name) == 1 and "1" <= name <= "9":
+        return 0x1E + int(name) - 1
+    if name == "0":
+        return 0x27
+    if name.startswith("F") and name[1:].isdigit():
+        number = int(name[1:])
+        if 1 <= number <= 12:
+            return 0x3A + number - 1
+        if 13 <= number <= 24:
+            return 0x68 + number - 13
+    return FIRMWARE_NAMED_KEYS.get(name)
+
+
+def encode_firmware_action(action: Any) -> Tuple[int, int, int, str]:
+    """Pack one action into (type, modifiers, key, text-hex) for the pad."""
+    if not isinstance(action, dict):
+        return (FIRMWARE_ACTION_NONE, 0, 0, "")
+    kind = action.get("type")
+    if kind in (None, "none", "mode_toggle"):
+        # mode_toggle is executed by the firmware itself (LED/layer).
+        return (FIRMWARE_ACTION_NONE, 0, 0, "")
+    if kind == "text":
+        text = action.get("text") or ""
+        if not text:
+            return (FIRMWARE_ACTION_NONE, 0, 0, "")
+        if len(text) > FIRMWARE_TEXT_MAX or any(ord(char) > 127 for char in text):
+            # Too long or non-ASCII: only the application can type it.
+            return (FIRMWARE_ACTION_APP_ONLY, 0, 0, "")
+        return (FIRMWARE_ACTION_TEXT, 0, 0, text.encode("ascii").hex())
+    if kind == "shortcut":
+        keycode = firmware_keycode(action.get("key"))
+        if keycode is None:
+            return (FIRMWARE_ACTION_APP_ONLY, 0, 0, "")
+        modifiers = 0
+        for name in action.get("modifiers") or []:
+            modifiers |= FIRMWARE_MODIFIERS.get(str(name).lower(), 0)
+        return (FIRMWARE_ACTION_SHORTCUT, modifiers, keycode, "")
+    if kind == "system_action":
+        preset = str(action.get("presetId") or "")
+        return (FIRMWARE_PRESETS.get(preset, FIRMWARE_ACTION_APP_ONLY), 0, 0, "")
+    if kind == "media":
+        media = str(action.get("mediaKey") or "").upper()
+        return (FIRMWARE_MEDIA.get(media, FIRMWARE_ACTION_APP_ONLY), 0, 0, "")
+    if kind == "home_assistant":
+        return (FIRMWARE_ACTION_HOME_ASSISTANT, 0, 0, "")
+    # launch_app, command, delay, sequences... need the application.
+    return (FIRMWARE_ACTION_APP_ONLY, 0, 0, "")
+
+
+def firmware_action(mode: int, button: int, trigger: int, raw_action: Any) -> str:
+    """One ACT: line for a trigger slot (a slot may hold a sequence)."""
+    actions = actions_list(raw_action)
+    if not actions:
+        kind, modifiers, keycode, text_hex = FIRMWARE_ACTION_NONE, 0, 0, ""
+    elif len(actions) > 1:
+        # A multi-step sequence cannot be replayed by the firmware.
+        kind, modifiers, keycode, text_hex = FIRMWARE_ACTION_APP_ONLY, 0, 0, ""
+    else:
+        kind, modifiers, keycode, text_hex = encode_firmware_action(actions[0])
+    return f"ACT:{mode},{button},{trigger},{kind},{modifiers},{keycode},{text_hex}"
+
+
+def firmware_actions(config: Dict[str, Any]) -> List[str]:
+    """Full sync payload: clear, every trigger slot, then commit to NVS."""
+    lines = ["ACTCLR"]
+    modes = config.get("modes") or []
+    for mode_index in range(2):
+        mode = modes[mode_index] if mode_index < len(modes) else {}
+        buttons = (mode or {}).get("buttons") or []
+        for button_index in range(len(PINOUT)):
+            button = buttons[button_index] if button_index < len(buttons) else {}
+            for trigger_index, trigger in enumerate(("single", "double", "hold")):
+                lines.append(firmware_action(
+                    mode_index, button_index, trigger_index,
+                    (button or {}).get(trigger)))
+    lines.append("ACTSAVE")
+    return lines
+
+
 def apply_preset(key: str) -> Dict[str, Any]:
     """Build a configuration from a built-in preset ('default' | 'productivity' | 'media')."""
     config = default_config()

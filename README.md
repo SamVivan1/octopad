@@ -1,11 +1,11 @@
-# 🎛️ OctoPad v2.6.1
+# 🎛️ OctoPad v2.7.0
 
 [![ESP32](https://img.shields.io/badge/Microcontroller-ESP32--C3-red.svg?logo=espressif)](https://www.espressif.com/)
 [![Connectivity](https://img.shields.io/badge/Connectivity-BLE%20HID%20%7C%20USB--Serial-blue.svg)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-0078D6.svg?logo=windows&logoColor=white)](https://github.com/SamVivan1/octopad)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**OctoPad v2.6.1** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
+**OctoPad v2.7.0** is an 8-key wireless mechanical macropad based on the **ESP32-C3 SuperMini** with **Bluetooth Low Energy (BLE HID)** and **USB Serial** connectivity. It is complemented by **native desktop applications** — **GTK4 + Libadwaita on Linux** and **PySide6/Qt6 on Windows** — for configuring keys, monitoring hardware events, and **Home Assistant** integration — no web server, no Docker.
 
 ---
 
@@ -21,6 +21,8 @@
 - **Dedicated System Key (B1 / GPIO 20)**:
   - Single Click: Toggle layer (*Desktop Mode* ↔ *Home Assistant Mode*).
   - Hold / Long Press: free for your own action (none mapped by default).
+- **Standalone HID Mode**: the pad is also a BLE keyboard. Actions synced from
+  the app keep working after the app is closed — no extra hardware, no dongle.
 - **Native Desktop Application (GTK4 + Libadwaita)**:
   - Visual interactive 8-key mechanical chassis with a per-trigger action inspector (1x / 2x / hold).
   - **Live Hardware Event Monitor**: on-screen key press animations in real time when the physical switch is pressed.
@@ -94,6 +96,38 @@ All default shortcuts are sent with the modifier combination: `Ctrl + Alt + Shif
 | **B8** | `Key F8` | `Key P` | `Key L` |
 
 ---
+
+## ⌨️ Standalone Mode (no app)
+
+The pad has its own BLE HID keyboard, so it keeps working when the OctoPad
+application is closed or not running.
+
+1. Flash firmware 2.7.0 or newer.
+2. Open the app **with the USB cable** and press **Settings → Connection →
+   Sync** (saving the profile and reconnecting the cable also sync).
+3. Pair the pad once from the OS Bluetooth settings — it advertises as a
+   keyboard named after the device (default **OctoPad**).
+4. Close the app. After ~8 s the pad switches to standalone mode on its own.
+
+| Action | Works without the app? |
+| --- | --- |
+| Shortcut (modifier + key) | ✅ |
+| Text (ASCII, up to 64 characters) | ✅ |
+| Volume up/down/mute, media keys | ✅ |
+| Screenshot (Shift+PrtSc), lock (Super+L), terminal (Ctrl+Alt+T) | ✅ |
+| Home Assistant, launch-app, multi-step sequences | ❌ 5-blink LED warning |
+| Text longer than 64 chars, non-ASCII text | ❌ 5-blink LED warning |
+
+Notes:
+- Standalone typing uses the **US keyboard layout**.
+- The action table is synced over **USB** (BLE writes are too small for the
+  whole table). Re-sync after changing the keymap.
+- The pad is a single BLE device: when the OS holds the HID link, the app can
+  still attach to the custom service on the same connection, but the reliable
+  setup is **USB for the app, Bluetooth for the keyboard**.
+- The firmware decides between app and standalone mode from the TX
+  subscription, the USB CDC port and the app's `PING`; expect up to 8 s after
+  the app closes.
 
 ## 📁 Repository Structure
 
@@ -209,7 +243,7 @@ Every update triggers the [`Build`](.github/workflows/build.yml) workflow, which
 produces a **`.deb`** for Linux (statically built with `packaging/deb/build_deb.sh`),
 a **standalone `.exe`** for Windows (built with PyInstaller) and the **ESP32
 firmware `.bin`** (compiled with `arduino-cli` for the ESP32-C3). Push a tag like
-`v2.6.1` and all three files are attached to the GitHub **Release**
+`v2.7.0` and all three files are attached to the GitHub **Release**
 automatically; the [latest release](https://github.com/SamVivan1/octopad/releases/latest)
 always holds the current `octopad_<version>-1_all.deb`,
 `octopad_<version>_windows-x64.exe` and `octopad_<version>_firmware.bin`.
@@ -252,8 +286,12 @@ on a small identity protocol so any name works:
   | `TIMING:<d>,<c>,<h>` | `TIMING:OK:…` | Set debounce / click / hold (ms) |
   | `MODE:DESKTOP\|HA` | `MODE: …` | Switch layer + persist |
   | `LINK:AUTO\|USB\|BLE` | `LINK:OK:…` | Choose which transport sends key events, persist |
+  | `ACT:<m>,<b>,<t>,<type>,<mods>,<key>,<hex>` | — | Stage one standalone action |
+  | `ACTCLR` | — | Clear the staged action table |
+  | `ACTSAVE` | `ACTSAVED` | Commit the staged table to NVS |
+  | `PING` | — | Keep the app marked present (standalone switch) |
   | `SAVE` | `SAVED` | Persist name, mode, link and timings |
-  | `INFO` | `INFO:…` | Dump name, mode, link and timings |
+  | `INFO` | `INFO:…` | Dump name, mode, link, app/hid and timings |
   | `RESET` | `RESET:OK` | Restore default timings + Auto link + Desktop mode |
   | `RESTART` | `REBOOTING` | Reboot the ESP32 |
 

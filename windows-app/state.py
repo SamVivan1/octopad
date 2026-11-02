@@ -80,6 +80,8 @@ firmware_version: Optional[str] = None
 ble_connected: bool = False
 ble_message: str = ""
 
+pad_config_synced: Optional[bool] = None  # action table copied to the pad?
+
 listener: Any = None         # SerialDaemonListener (set by main.py)
 ble: Any = None              # BleBridge (set by main.py)
 
@@ -110,6 +112,39 @@ def send_device_command(command: str, log: bool = True) -> bool:
         except Exception as exc:  # noqa: BLE001
             print(f"[STATE] failed to send device command: {exc}")
     return False
+
+
+def ping_pad() -> bool:
+    """Tell the firmware the app is alive (it falls back to HID when not)."""
+    return send_device_command("PING", log=False)
+
+
+def sync_firmware_actions() -> bool:
+    global pad_config_synced
+    """Copy the action table to the pad over USB so it works without the app.
+
+    Long payloads go over the cable only: the BLE RX write is limited by the
+    connection MTU, and the primary app link is USB anyway.
+    """
+    target = listener
+    if target is None:
+        pad_config_synced = False
+        emit("pad-config-changed", synced=False)
+        return False
+    try:
+        for line in config_module.firmware_actions(cfg):
+            if not target.send_command(line, log=False):
+                pad_config_synced = False
+                emit("pad-config-changed", synced=False)
+                return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[STATE] firmware action sync failed: {exc}")
+        pad_config_synced = False
+        emit("pad-config-changed", synced=False)
+        return False
+    pad_config_synced = True
+    emit("pad-config-changed", synced=True)
+    return True
 
 
 def rename_device(name: str) -> bool:
@@ -301,6 +336,7 @@ def save() -> bool:
                 _sync_timings()
             except Exception as exc:
                 print(f"[STATE] failed to sync to listener: {exc}")
+        sync_firmware_actions()
         emit("config-saved", ok=True)
     else:
         emit("config-saved", ok=False)
@@ -391,6 +427,8 @@ def set_serial_status(connected: bool, port: Optional[str]) -> None:
     serial_connected = connected
     serial_port = port
     emit("serial-status-changed", connected=connected, port=port)
+    if connected:
+        sync_firmware_actions()
 
 
 def set_ble_status(connected: bool, message: str) -> None:

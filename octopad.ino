@@ -1,4 +1,5 @@
 #include <NimBLEDevice.h>
+#include <NimBLEHIDDevice.h>
 #include <Preferences.h>
 
 // ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@
 // Identity / naming. The brand tag is what the application uses to confirm it
 // is an OctoPad and learn the user-configured name. The name lives in NVS and
 // can be anything — the app finds the pad by its OctoPad signature, not a name.
-#define FIRMWARE_VERSION "2.6.1"
+#define FIRMWARE_VERSION "2.7.0"
 #define DEVICE_BRAND "OCTOPAD"
 #define DEFAULT_DEVICE_NAME "OctoPad"
 #define MAX_DEVICE_NAME_LEN 24
@@ -86,14 +87,108 @@ void applyDeviceName();
 void processCommand(const String& l);
 void blinkLED(uint8_t count);
 
+// --- Standalone HID mode ---------------------------------------------------
+// The pad can work as a plain BLE keyboard when the application is not
+// running. The app pushes one compact action per trigger slot; if no app is
+// connected the firmware replays it itself. Actions that need the app (Home
+// Assistant, long/non-ASCII text, launch-app) are refused with a 5-blink LED.
+#define ACTION_TEXT_MAX 64
+#define APP_PING_TIMEOUT_MS 8000
+
+enum StoredActionType : uint8_t {
+  SA_NONE = 0,
+  SA_TEXT = 1,
+  SA_SHORTCUT = 2,
+  SA_VOL_UP = 3,
+  SA_VOL_DOWN = 4,
+  SA_VOL_MUTE = 5,
+  SA_SCREENSHOT = 6,
+  SA_LOCK = 7,
+  SA_TERMINAL = 8,
+  SA_APP_ONLY = 9,
+  SA_HOME_ASSISTANT = 10,
+  SA_MEDIA_PLAY = 11,
+  SA_MEDIA_NEXT = 12,
+  SA_MEDIA_PREV = 13
+};
+
+struct StoredAction {
+  uint8_t type;
+  uint8_t mods;
+  uint8_t key;
+  uint8_t len;
+  char text[ACTION_TEXT_MAX];
+};
+
+NimBLEHIDDevice* pHid = nullptr;
+NimBLECharacteristic* pHidKeyboard = nullptr;
+NimBLECharacteristic* pHidConsumer = nullptr;
+
+volatile bool appViaBle = false;      // the app subscribed to the TX characteristic
+volatile uint16_t appBleHandle = 0xFFFF;
+volatile bool hidHostReady = false;   // a host subscribed to the HID reports
+unsigned long lastAppPing = 0;
+
+// Two copies: the app fills staging and only ACTSAVE commits it, so an
+// interrupted sync never leaves half a keymap on the pad.
+StoredAction activeActions[2][BUTTON_COUNT][3];
+StoredAction stagingActions[2][BUTTON_COUNT][3];
+
+// Keyboard (report ID 1) + consumer control (report ID 2).
+const uint8_t HID_REPORT_MAP[] = {
+    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x01,
+    0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00,
+    0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
+    0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
+    0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65,
+    0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00,
+    0xC0,
+    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x02,
+    0x15, 0x00, 0x26, 0xFF, 0x03, 0x19, 0x00, 0x2A,
+    0xFF, 0x03, 0x75, 0x10, 0x95, 0x01, 0x81, 0x00,
+    0xC0};
+
+bool appPresent();
+void loadActions();
+void saveActions();
+void runLocalAction(uint8_t mode, uint8_t button, uint8_t trigger);
+
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     // Greet the application with the identity line (best effort: a client that
     // has not subscribed yet will instead read the TX value on connect).
     bleSend(helloLine());
+    // Keep advertising while connected: the OS may hold the HID link while the
+    // desktop app still needs to find and attach to the custom service.
+    NimBLEDevice::startAdvertising();
   }
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
+    appViaBle = false;
+    appBleHandle = 0xFFFF;
+    hidHostReady = false;
     NimBLEDevice::startAdvertising();
+  }
+};
+
+// The application marks itself present by subscribing to the TX notifications;
+// the OS HID host marks itself present by subscribing to the keyboard report.
+class AppLinkCallbacks : public NimBLECharacteristicCallbacks {
+  void onSubscribe(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo,
+                   uint16_t subValue) override {
+    if (subValue != 0) {
+      appViaBle = true;
+      appBleHandle = connInfo.getConnHandle();
+    } else if (appBleHandle == connInfo.getConnHandle()) {
+      appViaBle = false;
+      appBleHandle = 0xFFFF;
+    }
+  }
+};
+
+class HidReportCallbacks : public NimBLECharacteristicCallbacks {
+  void onSubscribe(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo,
+                   uint16_t subValue) override {
+    hidHostReady = subValue != 0;
   }
 };
 
@@ -151,14 +246,35 @@ void saveSettings() {
   prefs.end();
 }
 
+void loadActions() {
+  prefs.begin("mp", true);
+  size_t stored = prefs.getBytesLength("acts");
+  if (stored == sizeof(activeActions)) {
+    prefs.getBytes("acts", activeActions, stored);
+  } else {
+    memset(activeActions, 0, sizeof(activeActions));
+  }
+  prefs.end();
+  memcpy(stagingActions, activeActions, sizeof(activeActions));
+}
+
+void saveActions() {
+  prefs.begin("mp", false);
+  prefs.putBytes("acts", activeActions, sizeof(activeActions));
+  prefs.end();
+}
+
 void setupBLE() {
   NimBLEDevice::init(deviceName.c_str());
+  NimBLEDevice::setSecurityAuth(true, false, true);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
 
   NimBLEService* svc = pServer->createService(SERVICE_UUID);
   pTx = svc->createCharacteristic(TX_CHAR_UUID,
                                   NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
+  pTx->setCallbacks(new AppLinkCallbacks());
   NimBLECharacteristic* pRx = svc->createCharacteristic(
       RX_CHAR_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   pRx->setCallbacks(new CommandCallbacks());
@@ -169,8 +285,22 @@ void setupBLE() {
   String hello = helloLine();
   pTx->setValue((const uint8_t*)hello.c_str(), hello.length());
 
+  // HID keyboard + consumer control (report IDs 1 and 2). The host pairs with
+  // the pad; the custom service stays available to the app on the same radio.
+  pHid = new NimBLEHIDDevice(pServer);
+  pHid->setManufacturer("OctoPad");
+  pHid->setPnp(0x02, 0x1915, 0x5201, 0x0100);
+  pHid->setHidInfo(0x00, 0x02);
+  pHid->setReportMap((uint8_t*)HID_REPORT_MAP, sizeof(HID_REPORT_MAP));
+  pHidKeyboard = pHid->getInputReport(1);
+  pHidConsumer = pHid->getInputReport(2);
+  pHidKeyboard->setCallbacks(new HidReportCallbacks());
+  pHid->setBatteryLevel(100);
+
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
+  adv->addServiceUUID(pHid->getHidService()->getUUID());
+  adv->setAppearance(HID_KEYBOARD);
   adv->enableScanResponse(true);
   NimBLEDevice::startAdvertising();
 }
@@ -182,6 +312,12 @@ void applyDeviceName() {
   NimBLEDevice::deinit(true);
   pTx = nullptr;
   pServer = nullptr;
+  pHid = nullptr;
+  pHidKeyboard = nullptr;
+  pHidConsumer = nullptr;
+  appViaBle = false;
+  appBleHandle = 0xFFFF;
+  hidHostReady = false;
   setupBLE();
 }
 
@@ -231,6 +367,135 @@ void updateLED() {
   }
 }
 
+bool appPresent() {
+  if (appViaBle) {
+    return true;
+  }
+#if ARDUINO_USB_CDC_ON_BOOT
+  // Native USB CDC: the cable being open is a reliable sign the app is there.
+  if ((bool)Serial) {
+    return true;
+  }
+#endif
+  return lastAppPing != 0 && (millis() - lastAppPing) < APP_PING_TIMEOUT_MS;
+}
+
+// ASCII -> USB HID keyboard usage (US layout). Returns false for characters
+// the firmware cannot type.
+bool charToHid(char c, uint8_t& mods, uint8_t& key) {
+  mods = 0;
+  if (c >= 'a' && c <= 'z') { key = 0x04 + (c - 'a'); return true; }
+  if (c >= 'A' && c <= 'Z') { mods = 0x02; key = 0x04 + (c - 'A'); return true; }
+  if (c >= '1' && c <= '9') { key = 0x1E + (c - '1'); return true; }
+  if (c == '0') { key = 0x27; return true; }
+  if (c == ' ') { key = 0x2C; return true; }
+  if (c == '\n') { key = 0x28; return true; }
+  if (c == '\t') { key = 0x2B; return true; }
+  switch (c) {
+    case '-': key = 0x2D; return true;
+    case '=': key = 0x2E; return true;
+    case '[': key = 0x2F; return true;
+    case ']': key = 0x30; return true;
+    case '\\': key = 0x31; return true;
+    case ';': key = 0x33; return true;
+    case '\'': key = 0x34; return true;
+    case '`': key = 0x35; return true;
+    case ',': key = 0x36; return true;
+    case '.': key = 0x37; return true;
+    case '/': key = 0x38; return true;
+    case '!': mods = 0x02; key = 0x1E; return true;
+    case '@': mods = 0x02; key = 0x1F; return true;
+    case '#': mods = 0x02; key = 0x20; return true;
+    case '$': mods = 0x02; key = 0x21; return true;
+    case '%': mods = 0x02; key = 0x22; return true;
+    case '^': mods = 0x02; key = 0x23; return true;
+    case '&': mods = 0x02; key = 0x24; return true;
+    case '*': mods = 0x02; key = 0x25; return true;
+    case '(': mods = 0x02; key = 0x26; return true;
+    case ')': mods = 0x02; key = 0x27; return true;
+    case '_': mods = 0x02; key = 0x2D; return true;
+    case '+': mods = 0x02; key = 0x2E; return true;
+    case '{': mods = 0x02; key = 0x2F; return true;
+    case '}': mods = 0x02; key = 0x30; return true;
+    case '|': mods = 0x02; key = 0x31; return true;
+    case ':': mods = 0x02; key = 0x33; return true;
+    case '"': mods = 0x02; key = 0x34; return true;
+    case '~': mods = 0x02; key = 0x35; return true;
+    case '<': mods = 0x02; key = 0x36; return true;
+    case '>': mods = 0x02; key = 0x37; return true;
+    case '?': mods = 0x02; key = 0x38; return true;
+  }
+  return false;
+}
+
+void sendHidKey(uint8_t mods, uint8_t key) {
+  if (pHidKeyboard == nullptr || !hidHostReady) {
+    return;
+  }
+  uint8_t report[8] = {mods, 0, key, 0, 0, 0, 0, 0};
+  pHidKeyboard->setValue(report, sizeof(report));
+  pHidKeyboard->notify();
+  delay(10);
+  uint8_t release[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  pHidKeyboard->setValue(release, sizeof(release));
+  pHidKeyboard->notify();
+  delay(10);
+}
+
+void sendConsumer(uint16_t usage) {
+  if (pHidConsumer == nullptr || !hidHostReady) {
+    return;
+  }
+  uint8_t report[2] = {(uint8_t)(usage & 0xFF), (uint8_t)(usage >> 8)};
+  pHidConsumer->setValue(report, sizeof(report));
+  pHidConsumer->notify();
+  delay(20);
+  uint8_t release[2] = {0, 0};
+  pHidConsumer->setValue(release, sizeof(release));
+  pHidConsumer->notify();
+  delay(20);
+}
+
+void typeText(const char* text, uint8_t len) {
+  for (uint8_t i = 0; i < len; i++) {
+    uint8_t mods = 0;
+    uint8_t key = 0;
+    if (charToHid(text[i], mods, key)) {
+      sendHidKey(mods, key);
+    }
+  }
+}
+
+void runLocalAction(uint8_t mode, uint8_t button, uint8_t trigger) {
+  if (mode > 1 || button >= BUTTON_COUNT || trigger > 2) {
+    return;
+  }
+  StoredAction& action = activeActions[mode][button][trigger];
+  if (action.type == SA_NONE) {
+    return;
+  }
+  // These only make sense with the app running; warn instead of doing nothing.
+  if (action.type == SA_APP_ONLY || action.type == SA_HOME_ASSISTANT ||
+      !hidHostReady) {
+    blinkLED(5);
+    return;
+  }
+  switch (action.type) {
+    case SA_TEXT: typeText(action.text, action.len); break;
+    case SA_SHORTCUT: sendHidKey(action.mods, action.key); break;
+    case SA_VOL_UP: sendConsumer(0x00E9); break;
+    case SA_VOL_DOWN: sendConsumer(0x00EA); break;
+    case SA_VOL_MUTE: sendConsumer(0x00E2); break;
+    case SA_SCREENSHOT: sendHidKey(0x02, 0x46); break;          // Shift + PrtSc
+    case SA_LOCK: sendHidKey(0x08, 0x0F); break;                // GUI + L
+    case SA_TERMINAL: sendHidKey(0x01 | 0x04, 0x17); break;     // Ctrl + Alt + T
+    case SA_MEDIA_PLAY: sendConsumer(0x00CD); break;
+    case SA_MEDIA_NEXT: sendConsumer(0x00B5); break;
+    case SA_MEDIA_PREV: sendConsumer(0x00B6); break;
+    default: blinkLED(5); break;
+  }
+}
+
 const char* linkName() {
   return currentLink == LINK_USB ? "USB" : currentLink == LINK_BLE ? "BLE" : "AUTO";
 }
@@ -241,18 +506,22 @@ void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
     toggleMode();
   }
 
-  // 2. Emit the event line to the transports allowed by the link policy. In
-  // AUTO both are used and the application arbitrates; USB/BLE suppress the
-  // inactive transport so one press cannot arrive twice.
-  String modeText = (currentMode == DESKTOP_MODE) ? "DESKTOP" : "HA";
-  String eventText = (event == SINGLE_CLICK) ? "SINGLE" : (event == DOUBLE_CLICK) ? "DOUBLE" : "HOLD";
-  String line = String("[") + modeText + "] Button " + String(buttonIndex + 1) +
-                " -> " + eventText + " (LED Feedback Processed)";
-  if (currentLink != LINK_BLE) {
-    Serial.println(line);
-  }
-  if (currentLink != LINK_USB) {
-    bleSend(line);
+  // 2. With the app connected, forward the event to it. Otherwise replay the
+  //    action table stored in NVS over BLE HID (standalone mode).
+  if (!appPresent()) {
+    runLocalAction(currentMode == DESKTOP_MODE ? 0 : 1, buttonIndex,
+                   (uint8_t)(event - 1));
+  } else {
+    String modeText = (currentMode == DESKTOP_MODE) ? "DESKTOP" : "HA";
+    String eventText = (event == SINGLE_CLICK) ? "SINGLE" : (event == DOUBLE_CLICK) ? "DOUBLE" : "HOLD";
+    String line = String("[") + modeText + "] Button " + String(buttonIndex + 1) +
+                  " -> " + eventText + " (LED Feedback Processed)";
+    if (currentLink != LINK_BLE) {
+      Serial.println(line);
+    }
+    if (currentLink != LINK_USB) {
+      bleSend(line);
+    }
   }
 
   // 3. Global LED feedback: double = 2 blinks, hold = 3 blinks, single = none.
@@ -272,11 +541,22 @@ void handleButtonEvent(uint8_t buttonIndex, ButtonEvent event) {
 //   TIMING:<d>,<c>,<h>  -> TIMING:OK:<d>,<c>,<h> | TIMING:ERR
 //   MODE:DESKTOP|HA     -> MODE: DESKTOP | MODE: HOME ASSISTANT
 //   LINK:AUTO|USB|BLE   -> LINK:OK:<mode> | LINK:ERR
+//   ACT:<m>,<b>,<t>,<type>,<mods>,<key>,<hex>  (staged, no reply)
+//   ACTCLR              -> clear the staged action table (no reply)
+//   ACTSAVE             -> ACTSAVED (commit staging to NVS)
+//   PING                -> keeps the app marked present (no reply)
 //   SAVE                -> SAVED
 //   RESET               -> RESET:OK (timings + mode + link restored, name kept)
 //   INFO                -> INFO:name=...,mode=...,link=...,debounce=...,click=...,hold=...
 //   RESTART             -> REBOOTING (reboots the ESP32)
 // ---------------------------------------------------------------------------
+int hexDigit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
 void processCommand(const String& l) {
   if (l.startsWith("WHO")) {
     respond(helloLine());
@@ -287,13 +567,15 @@ void processCommand(const String& l) {
     return;
   }
   if (l.startsWith("HELP")) {
-    respond("HELP:WHO,NAME,TIMING,MODE,LINK,SAVE,RESET,INFO,RESTART,VERSION");
+    respond("HELP:WHO,NAME,TIMING,MODE,LINK,ACT,ACTCLR,ACTSAVE,PING,SAVE,RESET,INFO,RESTART,VERSION");
     return;
   }
   if (l.startsWith("INFO")) {
     String info = String("INFO:name=") + deviceName +
                   ",mode=" + (currentMode == DESKTOP_MODE ? "DESKTOP" : "HA") +
                   ",link=" + linkName() +
+                  ",app=" + (appPresent() ? "1" : "0") +
+                  ",hid=" + (hidHostReady ? "1" : "0") +
                   ",debounce=" + debounceMs + ",click=" + clickTimeoutMs +
                   ",hold=" + holdTimeoutMs + ",version=" + FIRMWARE_VERSION;
     respond(info);
@@ -347,8 +629,7 @@ void processCommand(const String& l) {
     }
     return;
   }
-  if (l.startsWith("LINK:")) {
-    String target = l.substring(5);
+  if (l.startsWith("LINK:")) {    String target = l.substring(5);
     target.trim();
     target.toUpperCase();
     if (target == "AUTO") {
@@ -363,6 +644,61 @@ void processCommand(const String& l) {
     }
     saveSettings();
     respond(String("LINK:OK:") + linkName());
+    return;
+  }
+  if (l.startsWith("ACT:")) {
+    String rest = l.substring(4);
+    uint8_t fields[6] = {0, 0, 0, 0, 0, 0};
+    int index = 0;
+    bool ok = true;
+    for (uint8_t i = 0; i < 6; i++) {
+      int comma = rest.indexOf(',', index);
+      if (comma < 0) { ok = false; break; }
+      String part = rest.substring(index, comma);
+      part.trim();
+      long value = part.toInt();
+      if (value < 0 || value > 255) { ok = false; break; }
+      fields[i] = (uint8_t)value;
+      index = comma + 1;
+    }
+    if (!ok || fields[0] > 1 || fields[1] >= BUTTON_COUNT || fields[2] > 2) {
+      respond("ACT:ERR");
+      return;
+    }
+    String hex = rest.substring(index);
+    hex.trim();
+    if (hex.length() % 2 != 0 || hex.length() > ACTION_TEXT_MAX * 2) {
+      respond("ACT:ERR");
+      return;
+    }
+    StoredAction& action = stagingActions[fields[0]][fields[1]][fields[2]];
+    memset(&action, 0, sizeof(action));
+    action.type = fields[3];
+    action.mods = fields[4];
+    action.key = fields[5];
+    for (uint16_t i = 0; i + 1 < hex.length(); i += 2) {
+      int hi = hexDigit(hex[i]);
+      int lo = hexDigit(hex[i + 1]);
+      if (hi < 0 || lo < 0) {
+        respond("ACT:ERR");
+        return;
+      }
+      action.text[action.len++] = (char)((hi << 4) | lo);
+    }
+    return;
+  }
+  if (l.startsWith("ACTCLR")) {
+    memset(stagingActions, 0, sizeof(stagingActions));
+    return;
+  }
+  if (l.startsWith("ACTSAVE")) {
+    memcpy(activeActions, stagingActions, sizeof(activeActions));
+    saveActions();
+    respond("ACTSAVED");
+    return;
+  }
+  if (l.startsWith("PING")) {
+    lastAppPing = millis();
     return;
   }
   if (l.startsWith("SAVE")) {
@@ -422,6 +758,7 @@ void setup() {
   }
 
   loadSettings();
+  loadActions();
   digitalWrite(LED_PIN, (currentMode == DESKTOP_MODE) ? HIGH : LOW);
   setupBLE();
   Serial.print("BLE ");

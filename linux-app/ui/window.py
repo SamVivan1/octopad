@@ -514,6 +514,7 @@ class OctoPadWindow(Adw.ApplicationWindow):
             port = listener.last_connected_port if connected else None
             state.set_serial_status(connected, port)
             state.set_device_name(getattr(listener, "device_name", None))
+        state.ping_pad()
         return True
 
     # ------------------------------------------------------------------

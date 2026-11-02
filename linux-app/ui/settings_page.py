@@ -298,6 +298,19 @@ class SettingsPage(Gtk.Box):
             subtitle="None — waiting for a transport",
         )
         link_group.add(self.active_link_row)
+
+        self.pad_config_row = Adw.ActionRow(
+            title="Standalone actions",
+            subtitle="Not synced — connect the USB cable",
+        )
+        pad_sync_button = util.button(
+            "Sync", "emblem-synchronizing-symbolic",
+            on_clicked=self._on_sync_pad)
+        pad_sync_button.set_valign(Gtk.Align.CENTER)
+        pad_sync_button.set_tooltip_text(
+            "Copy the button actions to the pad so they work when the app is closed")
+        self.pad_config_row.add_suffix(pad_sync_button)
+        link_group.add(self.pad_config_row)
         page.add(link_group)
 
         # --- Home Assistant --------------------------------------------
@@ -366,6 +379,7 @@ class SettingsPage(Gtk.Box):
         self._sync_ha()
         self._sync_device()
         self._sync_link()
+        self._sync_pad(state.pad_config_synced)
 
     # ------------------------------------------------------------------
     def _sync_device(self) -> None:
@@ -443,6 +457,25 @@ class SettingsPage(Gtk.Box):
             self.apps_row.set_subtitle(f"{len(state.installed_apps)} applications")
         elif event == "input-link-changed":
             self._sync_link()
+        elif event == "pad-config-changed":
+            self._sync_pad(bool(_data.get("synced")))
+
+    # ------------------------------------------------------------------
+    # Standalone (firmware HID) actions
+    # ------------------------------------------------------------------
+    def _sync_pad(self, synced: Optional[bool]) -> None:
+        if synced is True:
+            self.pad_config_row.set_subtitle(
+                "Saved on the pad — keys work when the app is closed")
+        elif synced is False:
+            self.pad_config_row.set_subtitle(
+                "Not synced — connect the USB cable and press Sync")
+
+    def _on_sync_pad(self, _btn) -> None:
+        if state.sync_firmware_actions():
+            self.window.show_toast("Actions copied to the pad.", "success")
+        else:
+            self.window.show_toast("Connect the USB cable to sync actions.", "error")
 
     # ------------------------------------------------------------------
     # Input link

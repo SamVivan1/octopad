@@ -4,6 +4,30 @@ All notable changes to OctoPad are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-11-02
+
+### Added
+- **Standalone HID mode.** The pad exposes a BLE HID keyboard + consumer
+  control next to the OctoPad service. The app pushes a compact action table to
+  the pad (Settings → Connection → **Sync**, plus automatically on every save
+  and USB connection). When the app is not running, the firmware replays the
+  actions itself: text, shortcuts, volume/media keys, screenshot
+  (Shift+PrtSc), lock (Super+L) and terminal (Ctrl+Alt+T).
+- Firmware commands `ACT:`, `ACTCLR`, `ACTSAVE` and `PING`. The table is staged
+  and only committed on `ACTSAVE`, so an interrupted sync keeps the previous
+  keymap.
+- The firmware treats the app as present when the TX notifications are
+  subscribed, the USB CDC port is open, or a `PING` arrived in the last 8 s.
+  Without the app it switches to standalone mode on its own.
+
+### Changed
+- Actions that need the desktop app (Home Assistant, launch-app, multi-step
+  sequences, text longer than 64 characters or non-ASCII) are refused with a
+  5-blink LED when the app is absent.
+- The action table is synced over USB; Bluetooth stays in use for the short
+  commands (link, timing, rename, ping).
+- NimBLE-Arduino pinned to 2.5.2 for the HID device support.
+
 ## [2.6.1] - 2026-10-30
 
 ### Fixed

@@ -77,6 +77,16 @@ class ProfilesPage(QWidget):
         self.user_layout = util.vbox(6, self.user_group)
         layout.addWidget(self.user_group)
 
+        # --- Standalone actions ----------------------------------------
+        standalone = QGroupBox("Standalone (no app)")
+        standalone_layout = util.vbox(4, standalone)
+        self.pad_label = QLabel("Pad actions: not synced")
+        standalone_layout.addWidget(self.pad_label)
+        self.pad_sync_button = QPushButton("Sync actions to pad")
+        self.pad_sync_button.clicked.connect(self._on_sync_pad)
+        standalone_layout.addWidget(self.pad_sync_button)
+        layout.addWidget(standalone)
+
         about = QGroupBox("About")
         about_layout = util.vbox(4, about)
         about_layout.addWidget(QLabel("OctoPad v" + version_module.app_version()))
@@ -91,6 +101,8 @@ class ProfilesPage(QWidget):
 
         state.subscribe(self._on_state_event)
         self._sync_state()
+        if state.pad_config_synced is not None:
+            self._show_pad_sync(state.pad_config_synced)
 
     # ------------------------------------------------------------------
     def _sync_state(self) -> None:
@@ -199,3 +211,13 @@ class ProfilesPage(QWidget):
     def _on_state_event(self, event: str, **data: Any) -> None:
         if event in ("dirty-changed", "config-saved", "config-replaced", "presets-changed"):
             self._sync_state()
+        elif event == "pad-config-changed":
+            self._show_pad_sync(bool(data.get("synced")))
+
+    def _show_pad_sync(self, synced: bool) -> None:
+        self.pad_label.setText(
+            "Pad actions: synced" if synced
+            else "Pad actions: not synced (connect USB and retry)")
+
+    def _on_sync_pad(self, _checked: bool = False) -> None:
+        self._show_pad_sync(state.sync_firmware_actions())

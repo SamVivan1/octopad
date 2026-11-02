@@ -118,7 +118,7 @@ jobs:
           arduino-cli core install esp32:esp32@3.3.5
 
       - name: Install NimBLE library
-        run: arduino-cli lib install "NimBLE-Arduino@2.5.1"
+        run: arduino-cli lib install "NimBLE-Arduino@2.5.2"
 
       - name: Compile sketch
         run: arduino-cli compile --fqbn esp32:esp32:esp32c3 --output-dir build .
