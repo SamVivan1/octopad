@@ -26,4 +26,4 @@ jobs:
         run: arduino-cli lib install "NimBLE-Arduino@2.5.2"
 
       - name: Compile sketch
-        run: arduino-cli compile --fqbn esp32:esp32:esp32c3 .
+        run: arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc .

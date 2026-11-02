@@ -343,8 +343,11 @@ sudo chmod a+rw /dev/ttyUSB0    # or /dev/ttyACM0
 3. Select the board: **ESP32C3 Dev Module** (or whichever ESP32-C3 board you use).
 4. Install the required library:
    - `NimBLE-Arduino` (by h2zero) — `Preferences` is built into the ESP32 core.
-5. Open the file [`octopad.ino`](octopad.ino).
-6. Plug the USB-C cable into the ESP32 and click **Upload**.
+5. **Tools → USB CDC On Boot → Enabled** (the SuperMini uses the native USB
+   serial port; with it disabled `Serial` goes to UART0 and the app cannot talk
+   to the pad).
+6. Open the file [`octopad.ino`](octopad.ino).
+7. Plug the USB-C cable into the ESP32 and click **Upload**.
 
 ### ⚡ Building from the command line (arduino-cli)
 
@@ -363,7 +366,9 @@ scripts/build_firmware.sh --upload --port /dev/ttyACM0
 ```
 
 Override versions if needed with `FQBN`, `CORE_VER` and `NIMBLE_VER` environment
-variables. Before opening a pull request, run the full local check (Python lint +
+variables. The default FQBN includes `CDCOnBoot=cdc`; keep that option when
+overriding it, otherwise the built firmware talks on UART0 instead of the USB
+port. Before opening a pull request, run the full local check (Python lint +
 tests + firmware compile):
 
 ```bash

@@ -40,8 +40,8 @@ if [ "$FIRMWARE" = off ]; then
 fi
 
 if command -v arduino-cli >/dev/null 2>&1; then
-  echo "==> Firmware compile (esp32:esp32:esp32c3)"
-  arduino-cli compile --fqbn "${FQBN:-esp32:esp32:esp32c3}" "$REPO_ROOT"
+  echo "==> Firmware compile (esp32:esp32:esp32c3:CDCOnBoot=cdc)"
+  arduino-cli compile --fqbn "${FQBN:-esp32:esp32:esp32c3:CDCOnBoot=cdc}" "$REPO_ROOT"
 else
   if [ "$FIRMWARE" = on ]; then
     echo "arduino-cli not found; install it to compile firmware." >&2

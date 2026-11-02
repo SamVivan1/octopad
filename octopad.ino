@@ -62,6 +62,7 @@ unsigned long ledNextToggleAt = 0;
 NimBLEServer* pServer = nullptr;
 NimBLECharacteristic* pTx = nullptr;
 Preferences prefs;
+String rxLine;  // command accumulator for the non-blocking serial reader
 
 struct Button {
   uint8_t pin;
@@ -741,18 +742,33 @@ void processCommand(const String& l) {
 }
 
 void handleCmd() {
-  if (!Serial.available()) {
-    return;
-  }
-  String l = Serial.readStringUntil('\n');
-  l.trim();
-  if (l.length() > 0) {
-    processCommand(l);
+  // Drain every complete line already in the buffer. readStringUntil() blocks
+  // for a second on a partial line, which turned a USB-CDC overflow into a
+  // stream of ACT:ERR replies; this reader never waits.
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      rxLine.trim();
+      if (rxLine.length() > 0) {
+        processCommand(rxLine);
+      }
+      rxLine = "";
+    } else if (c != '\r') {
+      if (rxLine.length() < 200) {
+        rxLine += c;
+      } else {
+        rxLine = "";  // drop an oversized line instead of corrupting the next
+      }
+    }
   }
 }
 
 void setup() {
+  // 50 ACT lines arrive back-to-back during a sync; the default CDC buffer is
+  // far too small and silently drops bytes (causing ACT:ERR / a lost ACTSAVE).
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
+  rxLine.reserve(200);
   delay(400);
 
   pinMode(LED_PIN, OUTPUT);

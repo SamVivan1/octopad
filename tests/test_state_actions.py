@@ -64,3 +64,33 @@ def test_ping_pad_uses_whichever_transport_is_connected(linux_state):
 
     assert serial.commands == ["PING"]
     assert ble.commands == ["PING"]
+
+
+def test_connecting_does_not_sync_before_the_pad_finished_booting(linux_state):
+    serial = FakeTransport()
+    linux_state.listener = serial
+    linux_state.serial_manually_disconnected = False
+    try:
+        linux_state.set_serial_status(True, "/dev/ttyACM0")
+    finally:
+        linux_state.listener = None
+        linux_state.set_serial_status(False, None)
+
+    assert not [line for line in serial.commands if line.startswith("ACT")]
+
+
+def test_sync_paces_the_burst_for_the_usb_buffer(linux_state, monkeypatch):
+    import state as state_module
+
+    sleeps = []
+    monkeypatch.setattr(state_module.time, "sleep",
+                        lambda seconds: sleeps.append(seconds))
+    serial = FakeTransport()
+    linux_state.listener = serial
+    try:
+        assert linux_state.sync_firmware_actions() is True
+    finally:
+        linux_state.listener = None
+
+    assert len(sleeps) >= len(serial.commands) - 1
+    assert all(0 < seconds <= 0.05 for seconds in sleeps)

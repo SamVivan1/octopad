@@ -155,6 +155,7 @@ class SerialDaemonListener:
         self.config: Dict[str, Any] = self.load_config()
         self.last_connected_port: Optional[str] = None
         self.device_name: Optional[str] = None
+        self._actions_synced: bool = False
 
     def load_config(self) -> Dict[str, Any]:
         """Load button-to-action configuration from user's config directory."""
@@ -313,6 +314,7 @@ class SerialDaemonListener:
                 try:
                     self.ser = serial.Serial(target_port, self.baudrate, timeout=1)
                     self.last_connected_port = target_port
+                    self._actions_synced = False
                     msg = f"[CONNECTED] Connected to hardware port: {target_port}"
                     print(f"[DAEMON] {msg}")
                     if self.on_event_callback:
@@ -347,10 +349,15 @@ class SerialDaemonListener:
                 elif "MODE: DESKTOP" in line:
                     self.current_mode = "desktop"
 
-                # Learn/refresh the device name from its identity line.
+                # Learn/refresh the device name from its identity line. The line
+                # arrives only after a fresh boot, so this is also the safe
+                # moment to push the action table (never while the pad boots).
                 hello = parse_hello_line(line)
                 if hello is not None:
                     self.device_name = hello
+                    if not self._actions_synced:
+                        self._actions_synced = True
+                        state.sync_firmware_actions()
                     continue
 
                 # Parse button click event

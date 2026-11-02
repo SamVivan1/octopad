@@ -9,6 +9,7 @@ Qt main thread through a lightweight QObject bridge.
 
 import copy
 import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -85,6 +86,7 @@ pad_config_synced: Optional[bool] = None  # action table copied to the pad?
 
 listener: Any = None         # SerialDaemonListener (set by main.py)
 ble: Any = None              # BleBridge (set by main.py)
+_sync_lock = threading.RLock()
 
 
 def _sync_timings() -> None:
@@ -121,31 +123,37 @@ def ping_pad() -> bool:
 
 
 def sync_firmware_actions() -> bool:
-    global pad_config_synced
     """Copy the action table to the pad over USB so it works without the app.
 
     Long payloads go over the cable only: the BLE RX write is limited by the
-    connection MTU, and the primary app link is USB anyway.
+    connection MTU, and the primary app link is USB anyway. The small pause
+    between lines matters: the ESP32-C3 USB CDC drops bytes when the whole
+    table arrives in one burst.
     """
-    target = listener
-    if target is None:
-        pad_config_synced = False
-        emit("pad-config-changed", synced=False)
-        return False
-    try:
-        for line in config_module.firmware_actions(cfg):
-            if not target.send_command(line, log=False):
-                pad_config_synced = False
-                emit("pad-config-changed", synced=False)
-                return False
-    except Exception as exc:  # noqa: BLE001
-        print(f"[STATE] firmware action sync failed: {exc}")
-        pad_config_synced = False
-        emit("pad-config-changed", synced=False)
-        return False
-    pad_config_synced = True
-    emit("pad-config-changed", synced=True)
-    return True
+    global pad_config_synced
+    with _sync_lock:
+        target = listener
+        if target is None:
+            pad_config_synced = False
+            emit("pad-config-changed", synced=False)
+            return False
+        lines = config_module.firmware_actions(cfg)
+        try:
+            for index, line in enumerate(lines):
+                if not target.send_command(line, log=False):
+                    pad_config_synced = False
+                    emit("pad-config-changed", synced=False)
+                    return False
+                if index + 1 < len(lines):
+                    time.sleep(0.005)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[STATE] firmware action sync failed: {exc}")
+            pad_config_synced = False
+            emit("pad-config-changed", synced=False)
+            return False
+        pad_config_synced = True
+        emit("pad-config-changed", synced=True)
+        return True
 
 
 def rename_device(name: str) -> bool:
@@ -463,8 +471,6 @@ def set_serial_status(connected: bool, port: Optional[str]) -> None:
     serial_connected = connected
     serial_port = port
     emit("serial-status-changed", connected=connected, port=port)
-    if connected:
-        sync_firmware_actions()
 
 
 def set_ble_status(connected: bool, message: str) -> None:

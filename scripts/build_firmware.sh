@@ -8,7 +8,7 @@
 #   scripts/build_firmware.sh --upload --port /dev/ttyACM0
 #
 # Environment overrides:
-#   FQBN        arduino-cli board FQBN (default: esp32:esp32:esp32c3)
+#   FQBN        arduino-cli board FQBN (default: esp32:esp32:esp32c3:CDCOnBoot=cdc)
 #   CORE_VER    ESP32 core version to install (default: 3.3.5)
 #   NIMBLE_VER  NimBLE-Arduino version to install (default: 2.5.1)
 set -euo pipefail
@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKETCH_DIR="$REPO_ROOT"
 BUILD_DIR="$REPO_ROOT/build"
 
-FQBN="${FQBN:-esp32:esp32:esp32c3}"
+FQBN="${FQBN:-esp32:esp32:esp32c3:CDCOnBoot=cdc}"
 CORE_VER="${CORE_VER:-3.3.5}"
 NIMBLE_VER="${NIMBLE_VER:-2.5.2}"
 

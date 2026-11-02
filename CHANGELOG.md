@@ -32,6 +32,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commands (link, timing, rename, ping).
 - NimBLE-Arduino pinned to 2.5.2 for the HID device support.
 
+### Fixed
+- Action sync no longer loses bytes on the ESP32-C3 USB CDC: the app pauses
+  5 ms between lines, the firmware uses a 4 KB RX buffer and a non-blocking
+  line reader, and the sync starts after the pad's `HELLO` instead of while it
+  is still booting. This was why `ACT:ERR` appeared and the pad stayed empty.
+- The firmware build (CI and `scripts/build_firmware.sh`) now sets
+  `CDCOnBoot=cdc`, matching the native-USB SuperMini.
+
 ## [2.6.1] - 2026-10-30
 
 ### Fixed

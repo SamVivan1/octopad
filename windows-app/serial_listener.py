@@ -18,6 +18,7 @@ import serial
 import serial.tools.list_ports
 
 import config as config_module
+import state
 from platform_actions import execute_action
 
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
@@ -119,6 +120,7 @@ class SerialDaemonListener:
         self.config: Dict[str, Any] = self.load_config()
         self.last_connected_port: Optional[str] = None
         self.device_name: Optional[str] = None
+        self._actions_synced: bool = False
 
     # ------------------------------------------------------------------
     def load_config(self) -> Dict[str, Any]:
@@ -274,6 +276,7 @@ class SerialDaemonListener:
                 try:
                     self.ser = serial.Serial(target_port, self.baudrate, timeout=1)
                     self.last_connected_port = target_port
+                    self._actions_synced = False
                     message = f"[CONNECTED] Connected to hardware port: {target_port}"
                     print(f"[DAEMON] {message}")
                     if self.on_event_callback:
@@ -306,6 +309,9 @@ class SerialDaemonListener:
                 hello = parse_hello_line(line)
                 if hello is not None:
                     self.device_name = hello
+                    if not self._actions_synced:
+                        self._actions_synced = True
+                        state.sync_firmware_actions()
                     continue
 
                 event = parse_event_line(line)
