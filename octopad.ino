@@ -557,6 +557,20 @@ int hexDigit(char c) {
   return -1;
 }
 
+uint16_t activeActionCount() {
+  uint16_t count = 0;
+  for (uint8_t mode = 0; mode < 2; mode++) {
+    for (uint8_t button = 0; button < BUTTON_COUNT; button++) {
+      for (uint8_t trigger = 0; trigger < 3; trigger++) {
+        if (activeActions[mode][button][trigger].type != SA_NONE) {
+          count++;
+        }
+      }
+    }
+  }
+  return count;
+}
+
 void processCommand(const String& l) {
   if (l.startsWith("WHO")) {
     respond(helloLine());
@@ -576,6 +590,7 @@ void processCommand(const String& l) {
                   ",link=" + linkName() +
                   ",app=" + (appPresent() ? "1" : "0") +
                   ",hid=" + (hidHostReady ? "1" : "0") +
+                  ",actions=" + activeActionCount() +
                   ",debounce=" + debounceMs + ",click=" + clickTimeoutMs +
                   ",hold=" + holdTimeoutMs + ",version=" + FIRMWARE_VERSION;
     respond(info);

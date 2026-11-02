@@ -291,7 +291,7 @@ on a small identity protocol so any name works:
   | `ACTSAVE` | `ACTSAVED` | Commit the staged table to NVS |
   | `PING` | — | Keep the app marked present (standalone switch) |
   | `SAVE` | `SAVED` | Persist name, mode, link and timings |
-  | `INFO` | `INFO:…` | Dump name, mode, link, app/hid and timings |
+  | `INFO` | `INFO:…` | Dump name, mode, link, app/hid, action count and timings |
   | `RESET` | `RESET:OK` | Restore default timings + Auto link + Desktop mode |
   | `RESTART` | `REBOOTING` | Reboot the ESP32 |
 
