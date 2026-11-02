@@ -21,7 +21,8 @@ This application is **not a daemon that keeps running in the background** — it
 | **Buttons** | Visual grid of 8 keycaps (index, GPIO, label, 3 trigger chips), the *Desktop / Home Assistant* mode switch, and a per-trigger action inspector (Single, Double, Hold). |
 | **Serial Console** | Real-time hardware log with coloring + an input to send commands to the macropad. |
 | **Profiles** | Save (Ctrl+S), import & export JSON profiles, and apply built-in presets. |
-| **Settings** | Input link (**Auto** / **Wired** / **Bluetooth** — only the active transport runs actions), standalone-action sync (pad works without the app), timing parameters (debounce / click / hold), device name (rename your pad), Home Assistant connection, application rescan, and application info. |
+| **Settings** | USB release/reconnect (flash firmware without closing the app), input link (**Auto** / **Wired** / **Bluetooth** — only the active transport runs actions), standalone-action sync (pad works without the app), timing parameters (debounce / click / hold), device name (rename your pad), Home Assistant connection, application rescan, and application info. |
+| **Tray** | Open the app, see USB/BLE/mode status, release or reconnect the USB port for flashing, and quit. |
 
 Also available in the header: the **Serial** pill (click → open console), the **HA** pill (click → connection dialog),
 and the **Save** button.

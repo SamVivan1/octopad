@@ -230,7 +230,12 @@ class OctoPadApplication(Adw.Application):
         import state
 
         def status_labels():
-            port = state.serial_port or "—"
+            if state.serial_manually_disconnected:
+                port = "released (flashing)"
+            elif state.serial_connected:
+                port = state.serial_port or "connected"
+            else:
+                port = "—"
             ble_state = "Connected" if state.ble_connected else "—"
             mode = "Home Assistant" if state.mode_index == 1 else "Desktop"
             return [f"Serial: {port}", f"BLE: {ble_state}", f"Mode: {mode}"]

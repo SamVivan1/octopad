@@ -19,6 +19,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The firmware treats the app as present when the TX notifications are
   subscribed, the USB CDC port is open, or a `PING` arrived in the last 8 s.
   Without the app it switches to standalone mode on its own.
+- **Release USB for flashing** from the tray menu or Settings → Connection.
+  The app closes the serial port (Bluetooth stays connected) so Arduino IDE /
+  `arduino-cli` can upload; **Reconnect USB** reopens it without restarting
+  the app.
 
 ### Changed
 - Actions that need the desktop app (Home Assistant, launch-app, multi-step

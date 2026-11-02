@@ -276,6 +276,9 @@ class OctoPadWindow(QMainWindow):
             "Save changes (Ctrl+S)" if state.dirty else "Configuration already saved")
 
     def _poll_serial(self) -> None:
+        if state.serial_manually_disconnected:
+            state.ping_pad()
+            return
         listener = state.listener
         if listener is not None:
             open_port = getattr(listener, "ser", None)

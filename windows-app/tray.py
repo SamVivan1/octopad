@@ -7,6 +7,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+import state
+
 
 def _make_icon() -> QIcon:
     """Draw a small rounded pad glyph so no external image file is needed."""
@@ -57,6 +59,14 @@ class OctoTray:
             self._status_actions.append(action)
 
         menu.addSeparator()
+        self._release_action = QAction("Release USB (for flashing)", menu)
+        self._release_action.triggered.connect(self._on_release)
+        menu.addAction(self._release_action)
+        self._reconnect_action = QAction("Reconnect USB", menu)
+        self._reconnect_action.triggered.connect(self._on_reconnect)
+        menu.addAction(self._reconnect_action)
+
+        menu.addSeparator()
         quit_action = QAction("Quit", menu)
         quit_action.triggered.connect(lambda: self.on_quit())
         menu.addAction(quit_action)
@@ -86,6 +96,22 @@ class OctoTray:
                 action.setVisible(True)
             else:
                 action.setVisible(False)
+
+        released = state.serial_manually_disconnected
+        self._release_action.setVisible(not released)
+        self._release_action.setEnabled(bool(state.serial_connected))
+        self._release_action.setText(
+            "Release USB (for flashing)" if state.serial_connected
+            else "USB not connected")
+        self._reconnect_action.setVisible(released)
+
+    def _on_release(self) -> None:
+        state.disconnect_serial()
+        self._refresh_status()
+
+    def _on_reconnect(self) -> None:
+        state.reconnect_serial()
+        self._refresh_status()
 
     def stop(self) -> None:
         if self._tray is not None:

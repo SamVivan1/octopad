@@ -150,8 +150,12 @@ class OctoPadApp:
         from tray import OctoTray
 
         def status_labels():
+            if self.state.serial_manually_disconnected:
+                port = "released (flashing)"
+            else:
+                port = self.state.serial_port or "-"
             return [
-                f"Serial: {self.state.serial_port or '-'}",
+                f"Serial: {port}",
                 f"BLE: {'Connected' if self.state.ble_connected else '-'}",
                 f"Mode: {'Home Assistant' if self.state.mode_index == 1 else 'Desktop'}",
             ]

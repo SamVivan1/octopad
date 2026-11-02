@@ -507,6 +507,9 @@ class OctoPadWindow(Adw.ApplicationWindow):
             self.save_button.set_tooltip_text("Configuration already saved")
 
     def _poll_serial(self) -> bool:
+        if state.serial_manually_disconnected:
+            state.ping_pad()
+            return True
         listener = state.listener
         if listener is not None:
             open_port = getattr(listener, "ser", None)

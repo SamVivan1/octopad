@@ -85,6 +85,11 @@ class ProfilesPage(QWidget):
         self.pad_sync_button = QPushButton("Sync actions to pad")
         self.pad_sync_button.clicked.connect(self._on_sync_pad)
         standalone_layout.addWidget(self.pad_sync_button)
+        self.usb_label = QLabel("USB: not connected")
+        standalone_layout.addWidget(self.usb_label)
+        self.usb_button = QPushButton("Release USB (for flashing)")
+        self.usb_button.clicked.connect(self._on_usb_toggle)
+        standalone_layout.addWidget(self.usb_button)
         layout.addWidget(standalone)
 
         about = QGroupBox("About")
@@ -101,6 +106,7 @@ class ProfilesPage(QWidget):
 
         state.subscribe(self._on_state_event)
         self._sync_state()
+        self._sync_usb()
         if state.pad_config_synced is not None:
             self._show_pad_sync(state.pad_config_synced)
 
@@ -213,6 +219,8 @@ class ProfilesPage(QWidget):
             self._sync_state()
         elif event == "pad-config-changed":
             self._show_pad_sync(bool(data.get("synced")))
+        elif event in ("serial-status-changed", "serial-manual-changed"):
+            self._sync_usb()
 
     def _show_pad_sync(self, synced: bool) -> None:
         self.pad_label.setText(
@@ -221,3 +229,25 @@ class ProfilesPage(QWidget):
 
     def _on_sync_pad(self, _checked: bool = False) -> None:
         self._show_pad_sync(state.sync_firmware_actions())
+
+    def _sync_usb(self) -> None:
+        if state.serial_manually_disconnected:
+            self.usb_label.setText(
+                "USB: released for flashing (Bluetooth stays connected)")
+            self.usb_button.setText("Reconnect USB")
+            self.usb_button.setEnabled(True)
+        elif state.serial_connected:
+            self.usb_label.setText(f"USB: {state.serial_port or 'connected'}")
+            self.usb_button.setText("Release USB (for flashing)")
+            self.usb_button.setEnabled(True)
+        else:
+            self.usb_label.setText("USB: not connected")
+            self.usb_button.setText("Release USB (for flashing)")
+            self.usb_button.setEnabled(False)
+
+    def _on_usb_toggle(self, _checked: bool = False) -> None:
+        if state.serial_manually_disconnected:
+            state.reconnect_serial()
+        else:
+            state.disconnect_serial()
+        self._sync_usb()

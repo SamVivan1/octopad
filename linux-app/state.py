@@ -43,6 +43,7 @@ ha_message: str = ""
 
 serial_port: Optional[str] = None
 serial_connected: bool = False
+serial_manually_disconnected: bool = False  # released so the IDE can flash
 
 device_name: Optional[str] = None  # user-configured pad name (from identity handshake)
 firmware_version: Optional[str] = None  # firmware version reported in the HELLO line
@@ -468,6 +469,41 @@ def set_ha_status(connected: bool, message: str) -> None:
     ha_connected = connected
     ha_message = message
     emit("ha-status-changed", connected=connected, message=message)
+
+
+def disconnect_serial() -> bool:
+    """Release the USB port so Arduino IDE / arduino-cli can flash.
+
+    The BLE bridge is untouched: the pad stays reachable as a keyboard and,
+    while this app keeps running, events still arrive over Bluetooth.
+    """
+    global serial_manually_disconnected
+    serial_manually_disconnected = True
+    target = listener
+    if target is not None:
+        try:
+            target.stop()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[STATE] failed to release the serial port: {exc}")
+    set_serial_status(False, None)
+    emit("serial-manual-changed", released=True)
+    return True
+
+
+def reconnect_serial() -> bool:
+    """Reopen the USB port after flashing (the listener reconnects by itself)."""
+    global serial_manually_disconnected
+    serial_manually_disconnected = False
+    target = listener
+    if target is not None:
+        try:
+            target.start()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[STATE] failed to reopen the serial port: {exc}")
+            emit("serial-manual-changed", released=False, ok=False)
+            return False
+    emit("serial-manual-changed", released=False)
+    return True
 
 
 def set_serial_status(connected: bool, port: Optional[str]) -> None:

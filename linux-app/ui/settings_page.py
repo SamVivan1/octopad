@@ -299,6 +299,20 @@ class SettingsPage(Gtk.Box):
         )
         link_group.add(self.active_link_row)
 
+        self.usb_row = Adw.ActionRow(
+            title="USB port",
+            subtitle="Not connected",
+        )
+        self.usb_button = util.button(
+            "Release…", "media-eject-symbolic",
+            on_clicked=self._on_usb_toggle)
+        self.usb_button.set_valign(Gtk.Align.CENTER)
+        self.usb_button.set_tooltip_text(
+            "Close the serial port so Arduino IDE can flash the pad. "
+            "Bluetooth stays connected.")
+        self.usb_row.add_suffix(self.usb_button)
+        link_group.add(self.usb_row)
+
         self.pad_config_row = Adw.ActionRow(
             title="Standalone actions",
             subtitle="Not synced — connect the USB cable",
@@ -380,6 +394,7 @@ class SettingsPage(Gtk.Box):
         self._sync_device()
         self._sync_link()
         self._sync_pad(state.pad_config_synced)
+        self._sync_usb()
 
     # ------------------------------------------------------------------
     def _sync_device(self) -> None:
@@ -451,6 +466,8 @@ class SettingsPage(Gtk.Box):
         if event in ("device-name-changed", "device-info-changed",
                      "serial-status-changed", "ble-status-changed"):
             self._sync_device()
+            if event in ("serial-status-changed", "ble-status-changed"):
+                self._sync_usb()
         elif event in ("ha-status-changed", "ha-entities-changed"):
             self._sync_ha()
         elif event == "apps-changed":
@@ -459,6 +476,8 @@ class SettingsPage(Gtk.Box):
             self._sync_link()
         elif event == "pad-config-changed":
             self._sync_pad(bool(_data.get("synced")))
+        elif event == "serial-manual-changed":
+            self._sync_usb()
 
     # ------------------------------------------------------------------
     # Standalone (firmware HID) actions
@@ -498,6 +517,37 @@ class SettingsPage(Gtk.Box):
         policy = self._link_values[index]
         if policy != state.links.policy:
             state.set_input_link(policy)
+
+    # ------------------------------------------------------------------
+    # USB release (flashing)
+    # ------------------------------------------------------------------
+    def _sync_usb(self) -> None:
+        if state.serial_manually_disconnected:
+            self.usb_row.set_subtitle(
+                "Released for flashing — Bluetooth stays connected")
+            self.usb_button.set_label("Reconnect")
+            self.usb_button.set_sensitive(True)
+        elif state.serial_connected:
+            self.usb_row.set_subtitle(
+                f"In use by the app ({state.serial_port or 'connected'})")
+            self.usb_button.set_label("Release…")
+            self.usb_button.set_sensitive(True)
+        else:
+            self.usb_row.set_subtitle("Not connected")
+            self.usb_button.set_label("Release…")
+            self.usb_button.set_sensitive(False)
+
+    def _on_usb_toggle(self, _btn) -> None:
+        if state.serial_manually_disconnected:
+            if state.reconnect_serial():
+                self.window.show_toast("USB port reopened.", "success")
+            else:
+                self.window.show_toast("Could not reopen the USB port.", "error")
+            return
+        state.disconnect_serial()
+        self.window.show_toast(
+            "USB released — Arduino IDE can flash now. Bluetooth stays on.",
+            "success")
 
     def _on_ha_connect(self, _btn) -> None:
         from ui.ha_dialogs import HaConnectionDialog

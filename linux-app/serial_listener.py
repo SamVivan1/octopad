@@ -204,6 +204,12 @@ class SerialDaemonListener:
             except Exception:
                 pass
         self.ser = None
+        thread = self.thread
+        if thread is not None and thread is not threading.current_thread():
+            # Wait for the old loop to leave before a later start() reopens the
+            # port, otherwise its exception handler can close the new handle.
+            thread.join(timeout=2.0)
+        self.thread = None
         state.set_serial_status(False, None)
 
     def send_command(self, command: str, log: bool = True) -> bool:

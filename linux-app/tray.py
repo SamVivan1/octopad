@@ -33,6 +33,8 @@ _MENU_PATH = "/MenuBar"
 # dbusmenu item ids
 _ID_OPEN = 1
 _ID_QUIT = 2
+_ID_USB_RELEASE = 3
+_ID_USB_RECONNECT = 4
 _ID_STATUS_BASE = 10
 _ID_SEPARATOR = 100
 
@@ -222,6 +224,8 @@ class StatusNotifierTray:
 
     def _tooltip(self) -> str:
         mode = "Home Assistant" if state.mode_index == 1 else "Desktop"
+        if state.serial_manually_disconnected:
+            return f"OctoPad — {mode} mode (USB released for flashing)"
         return f"OctoPad — {mode} mode"
 
     def _watcher_available(self) -> bool:
@@ -294,9 +298,20 @@ class StatusNotifierTray:
                           []))
         return items
 
+    def _usb_items(self) -> list:
+        if state.serial_manually_disconnected:
+            return [(_ID_USB_RECONNECT,
+                     {"label": _s("Reconnect USB")}, [])]
+        connected = bool(state.serial_connected)
+        label = "Release USB (for flashing)" if connected else "USB not connected"
+        return [(_ID_USB_RELEASE,
+                 {"label": _s(label),
+                  "enabled": GLib.Variant("b", connected)}, [])]
+
     def _flat_items(self) -> list:
         items = [(_ID_OPEN, {"label": _s("Open Application")}, [])]
         items.extend(self._status_items())
+        items.extend(self._usb_items())
         items.append((_ID_SEPARATOR, {"type": _s("separator")}, []))
         items.append((_ID_QUIT, {"label": _s("Quit")}, []))
         return items
@@ -348,6 +363,10 @@ class StatusNotifierTray:
                     self._on_show()
                 elif item_id == _ID_QUIT:
                     self._on_quit()
+                elif item_id == _ID_USB_RELEASE:
+                    state.disconnect_serial()
+                elif item_id == _ID_USB_RECONNECT:
+                    state.reconnect_serial()
             invocation.return_value(None)
         elif method == "AboutToShow":
             invocation.return_value(GLib.Variant("(b)", (False,)))
@@ -398,5 +417,6 @@ class StatusNotifierTray:
     # --------------------------------------------------------------- events
     def _on_state_event(self, event_name: str, **_kwargs) -> None:
         if event_name in ("serial-status-changed", "ble-status-changed",
-                          "mode-changed", "config-saved"):
+                          "serial-manual-changed", "mode-changed",
+                          "config-saved"):
             self.refresh()

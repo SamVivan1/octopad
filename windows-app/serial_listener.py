@@ -182,6 +182,11 @@ class SerialDaemonListener:
             except Exception:  # noqa: BLE001
                 pass
         self.ser = None
+        thread = self.thread
+        if thread is not None and thread is not threading.current_thread():
+            # Let the old loop finish before a later start() reopens the port.
+            thread.join(timeout=2.0)
+        self.thread = None
 
     def send_command(self, command: str, log: bool = True) -> bool:
         """Send a single text command to the hardware (used by the console)."""

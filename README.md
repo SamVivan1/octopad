@@ -119,6 +119,10 @@ application is closed or not running.
 | Text longer than 64 chars, non-ASCII text | ❌ 5-blink LED warning |
 
 Notes:
+- **Flashing while the app is open:** tray menu → **Release USB (for
+  flashing)**, run Arduino IDE / `arduino-cli`, then **Reconnect USB**. The
+  same control is in Settings → Connection. Bluetooth stays connected, so the
+  pad keeps working through the app while the port is released.
 - Standalone typing uses the **US keyboard layout**.
 - The action table is synced over **USB** (BLE writes are too small for the
   whole table). Re-sync after changing the keymap.
